@@ -1,0 +1,20 @@
+{
+  "name": "nao-se-mexa",
+  "version": "1.0.0",
+  "description": "NÃO SE MEXA! — jogo 3D multiplayer de terror e sobrevivência no navegador",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "build": "vite build",
+    "start": "node server/index.js",
+    "dev": "vite build && node server/index.js",
+    "test": "node --test test/*.test.js",
+    "e2e": "node e2e/e2e.mjs"
+  },
+  "dependencies": {
+    "three": "0.187.0",
+    "vite": "^5.4.0",
+    "ws": "^8.18.0"
+  }
+}
