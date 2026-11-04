@@ -98,5 +98,5 @@ export const SOUND_TYPES = {
 
 export const SURFACE_MUL = { wood: 1.0, stone: 0.9, tile: 1.1, carpet: 0.6 };
 
-export const NET = { snapRate: 15, inputRate: 20, reconnectGrace: 60, hostMigrateDelay: 3 };
+export const NET = { snapRate: 15, inputRate: 20, reconnectGrace: 60, hostMigrateDelay: 10 };
 export const MAX_PLAYERS = 4;

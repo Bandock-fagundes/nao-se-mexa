@@ -32,6 +32,8 @@ export class Game {
     this.crState = null; this.crSnaps = [];
     // mão + lanterna
     this.hand = buildHand(M); this.R.handScene.add(this.hand.root); this.handAnim = new HandAnimator(this.hand);
+    // preenchimento frontal suave na mão (luz da lanterna rebatida nas paredes) — a madeira não fica chapada de preto
+    this.handFront = new THREE.DirectionalLight(0xffe6cc, 0); this.handFront.position.set(-0.35, 0.5, 1); this.R.handScene.add(this.handFront);
     this.spot = new THREE.SpotLight(0xe8f0ff, 0, 28, 0.42, 0.45, 1.0);
     this.spot.castShadow = this.R.q.shadows; this.spot.shadow.mapSize.set(this.R.q.shadowSize, this.R.q.shadowSize); this.spot.shadow.camera.near = 0.15; this.spot.shadow.bias = -0.0006; this.spot.shadow.normalBias = 0.02;
     this.R.scene.add(this.spot); this.R.scene.add(this.spot.target);
@@ -40,6 +42,9 @@ export class Game {
     // lanternas dos colegas (luzes fixas reaproveitadas)
     this.remoteSpots = [0, 1, 2].map(() => { const s = new THREE.SpotLight(0xe8f0ff, 0, 18, 0.4, 0.5, 1.5); this.R.scene.add(s); this.R.scene.add(s.target); const c = makeBeamCone(6, 0.36, 0.045); c.visible = false; this.R.scene.add(c); return { s, c }; });
     this.mates = new Map(); this.snaps = [];
+    // espectador: luz de preenchimento suave em volta do colega observado (a figura inteira fica legível)
+    this.specFill = new THREE.PointLight(0xc4ccdc, 0, 7, 1.4); this.R.scene.add(this.specFill);
+    this.specRim = new THREE.PointLight(0x8090b0, 0, 5, 1.6); this.R.scene.add(this.specRim);
     // estado
     const you = msg.you || { x: this.map.spawns[0].x, z: this.map.spawns[0].z, level: 1, yaw: Math.PI, alive: true, escaped: false };
     this.p = { x: you.x, z: you.z, level: you.level, y: LEVELS[you.level].y, yaw: you.yaw, pitch: 0, vx: 0, vz: 0, crouchK: 0, jumpY: 0, vy: 0, grounded: true, stamina: PLAYER.staminaMax, exhausted: false, alive: you.alive !== false, escaped: !!you.escaped, fl: true, jumps: 0, lands: 0, stepAcc: 0, bob: 0 };
@@ -55,11 +60,13 @@ export class Game {
     window.__game = this;
   }
   dispose() {
-    this.R.scene.remove(this.view.root, this.cr.root, this.spot, this.spot.target, this.beam);
+    this.R.scene.remove(this.view.root, this.cr.root, this.spot, this.spot.target, this.beam, this.specFill, this.specRim);
+    const hf = document.getElementById('hFl'); if (hf) hf.style.display = '';
+    const vg = document.getElementById('vignette'); if (vg) vg.style.opacity = '';
     for (const r of this.remoteSpots) this.R.scene.remove(r.s, r.s.target, r.c);
     for (const l of this.pool.lights) this.R.scene.remove(l.l);
     for (const m of this.mates.values()) this.R.scene.remove(m.v.root);
-    this.R.handScene.remove(this.hand.root);
+    this.R.handScene.remove(this.hand.root, this.handFront);
     this.R.scene.traverse(o => { });
     if (window.__game === this) window.__game = null;
   }
@@ -221,7 +228,8 @@ export class Game {
       // passos locais
       p.stepAcc += moved;
       const stride = running ? 0.95 : crouch ? 0.55 : 0.75;
-      if (p.stepAcc >= stride && p.grounded) { p.stepAcc = 0; this.playStep(false, running, crouch); }
+      p.stride = stride;
+      if (p.stepAcc >= stride && p.grounded) { p.stepAcc = 0; p.stepN = (p.stepN || 0) + 1; this.playStep(false, running, crouch); }
       p.bob += moved * (running ? 2.4 : 3.2);
       p.speed = speed;
     }
@@ -239,7 +247,10 @@ export class Game {
     let camLevel = p.level;
     if (active || (!p.alive && this.deathT && performance.now() - this.deathT < 1500 && !this.spectate)) {
       const eye = PLAYER.eye + (PLAYER.crouchEye - PLAYER.eye) * p.crouchK;
-      const bob = active ? Math.sin(p.bob) * 0.035 * Math.min(1, (p.speed || 0) / 2.6) : 0;
+      // balanço da câmera sincronizado com as pisadas (mais baixo no instante do passo)
+      const stepPh = (p.stepN || 0) + (p.stepAcc || 0) / (p.stride || 0.75);
+      this.bobW = (this.bobW || 0) + ((active && (p.speed || 0) > 0.2 ? Math.min(1, (p.speed || 0) / 2.6) : 0) - (this.bobW || 0)) * Math.min(1, dt * 6);
+      const bob = -(0.5 + 0.5 * Math.cos(stepPh * Math.PI * 2)) * (p.running ? 0.045 : 0.03) * this.bobW;
       if (!p.alive) {
         const k = Math.min(1, (performance.now() - this.deathT) / 1200);
         cam.position.set(p.x, p.y + eye * (1 - k * 0.8) + 0.05, p.z);
@@ -254,6 +265,7 @@ export class Game {
       camLevel = this.spectatorCam(dt);
     }
     this.camLevel = camLevel;
+    this.updateSpecFill(dt);
     // ----- visibilidade por andar / neblina -----
     for (let L = 0; L < 4; L++) this.view.levels[L].visible = Math.abs(L - camLevel) <= 1;
     const fogD = camLevel === 0 ? 0.075 : camLevel === 3 ? 0.068 : 0.05;
@@ -277,12 +289,13 @@ export class Game {
     this.beam.position.copy(lensPos); this.beam.lookAt(this.spot.target.position); this.beam.rotateY(Math.PI); this.beam.material.uniforms.uTime.value = this.t;
     // mão: luz que incide sobre ela (lâmpadas próximas + respingo da lanterna)
     let nearest = null, nd = 1e9; for (const s of this.pool.lights) { if (!s.lamp) continue; const d = s.l.position.distanceTo(cam.position); if (d < nd) { nd = d; nearest = s; } }
-    R.handSpill.intensity = flOn ? 0.5 : 0; R.handKey.intensity = nearest ? Math.min(1.2, nearest.l.intensity * 0.6 / (1 + nd * nd * 0.15)) : 0.05;
+    R.handSpill.intensity = flOn ? 0.9 : 0; R.handKey.intensity = nearest ? Math.min(1.3, 0.12 + nearest.l.intensity * 0.6 / (1 + nd * nd * 0.15)) : 0.12;
     if (nearest) { R.handKey.color.copy(nearest.l.color); const dir = nearest.l.position.clone().sub(cam.position).applyQuaternion(cam.quaternion.clone().invert()).normalize(); R.handKey.position.copy(dir); }
-    R.handHemi.intensity = camLevel === 0 ? 0.35 : 0.5;
+    R.handHemi.intensity = (camLevel === 0 ? 0.5 : 0.7) * (flOn ? 1 : 0.6);
+    this.handFront.intensity = flOn ? 0.85 : 0.18;
     const yawVel = (lerpA(this.lastYaw, p.yaw, 1) - this.lastYaw) / Math.max(dt, 1e-3), pitchVel = (p.pitch - this.lastPitch) / Math.max(dt, 1e-3);
     this.lastYaw = p.yaw; this.lastPitch = p.pitch;
-    this.handAnim.update(dt, { speed: p.speed || 0, running: p.running, crouch: p.crouch, on: p.fl, yawVel, pitchVel, dead: !p.alive });
+    this.handAnim.update(dt, { speed: active ? (p.speed || 0) : 0, running: p.running, crouch: p.crouch, on: p.fl, yawVel, pitchVel, dead: !p.alive, stepPhase: (p.stepN || 0) + (p.stepAcc || 0) / (p.stride || 0.75) });
     // ----- animação de portas, recipientes, objetos -----
     this.animateWorld(dt);
     // ----- interação -----
@@ -293,6 +306,16 @@ export class Game {
     this.ambientAudio(dt);
     // ----- HUD -----
     this.ui.updateHud(this);
+    // espectador: sem rótulo da lanterna e sem o vermelho da morte depois que a tela de morte foi fechada
+    const spectating = !p.alive || p.escaped;
+    const hf = document.getElementById('hFl'); if (hf) hf.style.display = spectating ? 'none' : '';
+    const vg = document.getElementById('vignette');
+    if (vg) {
+      const deathOpen = !document.getElementById('death')?.classList.contains('hidden');
+      const recent = this.deathT && performance.now() - this.deathT < 1600;
+      if (!p.alive && !deathOpen && !recent) vg.classList.remove('hurt');
+      vg.style.opacity = !p.alive && !deathOpen && !recent ? '0.6' : '';
+    }
   }
   toggleFlashlight() {
     if (!this.p.alive || this.p.escaped) return;
@@ -407,7 +430,8 @@ export class Game {
       for (let a2 = -2; a2 <= 2 && !duck; a2++) for (let b2 = -2; b2 <= 2; b2++) { const t = this.world.cell(L, cx + a2, cz + b2); if (t === T.DOOR || (t === T.FLOOR && this.map.levels[L].room[(cz + b2) * W + cx + a2] < 0)) { duck = 1; break; } }
       this.crDuck = (this.crDuck || 0) + (duck - (this.crDuck || 0)) * Math.min(1, dt * 4);
       this.crState = cb;
-      this.cr.anim.update(dt, { anim: cb.anim, animT: cb.animT, speed: ca.speed + (cb.speed - ca.speed) * k, headYaw: ca.headYaw + (cb.headYaw - ca.headYaw) * k, headPitch: ca.headPitch + (cb.headPitch - ca.headPitch) * k, yaw: c.rotation.y, duck: this.crDuck });
+      const li = (f) => (typeof ca[f] === 'number' && typeof cb[f] === 'number') ? ca[f] + (cb[f] - ca[f]) * k : undefined;
+      this.cr.anim.update(dt, { anim: cb.anim, animT: cb.animT, speed: ca.speed + (cb.speed - ca.speed) * k, headYaw: ca.headYaw + (cb.headYaw - ca.headYaw) * k, headPitch: ca.headPitch + (cb.headPitch - ca.headPitch) * k, yaw: c.rotation.y, duck: this.crDuck, vx: li('vx'), vz: li('vz'), turn: li('turn') });
     }
     // colegas
     let si = 0;
@@ -437,7 +461,7 @@ export class Game {
         const on = sp.fl && sp.alive && !sp.escaped && v.root.visible;
         const yaw = lerpA(sa.yaw, sp.yaw, k), pitch = sp.pitch;
         const dir = new THREE.Vector3(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch));
-        const pos = new THREE.Vector3(x - Math.cos(yaw) * 0.2, y + (sp.crouch ? 0.9 : 1.35), z + Math.sin(yaw) * 0.2).addScaledVector(dir, 0.35);
+        const pos = new THREE.Vector3(x + Math.cos(yaw) * 0.2, y + (sp.crouch ? 0.95 : 1.33), z - Math.sin(yaw) * 0.2).addScaledVector(dir, 0.5);
         rs.s.intensity = on ? 30 : 0; rs.s.position.copy(pos); rs.s.target.position.copy(pos).addScaledVector(dir, 8);
         rs.c.visible = on; rs.c.position.copy(pos); rs.c.lookAt(rs.s.target.position); rs.c.rotateY(Math.PI);
       }
@@ -465,6 +489,19 @@ export class Game {
     cam.position.x += (tx - cam.position.x) * Math.min(1, dt * 6); cam.position.y += (ty - cam.position.y) * Math.min(1, dt * 6); cam.position.z += (tz - cam.position.z) * Math.min(1, dt * 6);
     cam.rotation.set(-0.25 + tp.pitch * 0.5, yaw, 0, 'YXZ');
     return tp.level;
+  }
+  updateSpecFill(dt) {
+    const p = this.p;
+    const tgt = (!p.alive || p.escaped) && this.spectate ? this.mates.get(this.spectate) : null;
+    const want = tgt && tgt.v.root.visible ? 1 : 0;
+    this.specK = (this.specK || 0) + (want - (this.specK || 0)) * Math.min(1, dt * 3);
+    this.specFill.intensity = 5.5 * this.specK; this.specRim.intensity = 2.5 * this.specK;
+    if (tgt) {
+      const cam = this.R.camera.position, m = tgt.v.root.position;
+      // entre a câmera e o colega, um pouco acima (preenchimento) + contraluz atrás dele
+      this.specFill.position.set(m.x + (cam.x - m.x) * 0.45, m.y + 2.0, m.z + (cam.z - m.z) * 0.45);
+      this.specRim.position.set(m.x - (cam.x - m.x) * 0.35, m.y + 1.6, m.z - (cam.z - m.z) * 0.35);
+    }
   }
   cycleSpectator() {
     const alive = this.lastSnap ? this.lastSnap.players.filter(q => q.alive && !q.escaped && q.id !== this.myId) : [];

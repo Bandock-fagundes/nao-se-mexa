@@ -1,6 +1,9 @@
 // Áudio procedural (Web Audio): tudo sintetizado em código, posicional (HRTF) com oclusão por paredes.
+import { Music } from './music.js';
 export class AudioEngine {
-  constructor() { this.ctx = null; this.enabled = false; this.vol = { master: 0.8, sfx: 0.9, ambient: 0.7 }; this.occlusionFn = null; this.loops = []; }
+  constructor() { this.ctx = null; this.enabled = false; this.vol = { master: 0.8, sfx: 0.9, ambient: 0.7, music: 0.6 }; this.occlusionFn = null; this.loops = []; this.music = new Music(this); window.__music = this.music; }
+  // true quando o navegador ainda bloqueia o som (sem gesto do usuário)
+  get blocked() { return !this.ctx || this.ctx.state !== 'running'; }
   init() {
     if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
     const AC = window.AudioContext || window.webkitAudioContext;
@@ -11,6 +14,7 @@ export class AudioEngine {
     this.comp = c.createDynamicsCompressor(); this.comp.threshold.value = -14; this.comp.ratio.value = 4; this.comp.connect(this.master);
     this.sfx = c.createGain(); this.sfx.connect(this.comp);
     this.amb = c.createGain(); this.amb.connect(this.comp);
+    this.musBus = c.createGain(); this.musBus.connect(this.master); // música fora do compressor (sem 'bombear')
     this.applyVolumes();
     // buffers de ruído
     const mkNoise = (sec, kind) => {
@@ -27,8 +31,9 @@ export class AudioEngine {
     this.white = mkNoise(2, 'white'); this.pink = mkNoise(3, 'pink'); this.brown = mkNoise(4, 'brown');
     this.dist = c.createWaveShaper(); const curve = new Float32Array(1024); for (let i = 0; i < 1024; i++) { const x = i / 512 - 1; curve[i] = Math.tanh(x * 3); } this.dist.curve = curve;
     this.enabled = true;
+    this.music.attach();
   }
-  applyVolumes() { if (!this.ctx) return; this.master.gain.value = this.vol.master; this.sfx.gain.value = this.vol.sfx; this.amb.gain.value = this.vol.ambient * 0.8; }
+  applyVolumes() { if (!this.ctx) return; this.master.gain.value = this.vol.master; this.sfx.gain.value = this.vol.sfx; this.amb.gain.value = this.vol.ambient * 0.8; this.musBus.gain.value = (this.vol.music ?? 0.6) * 0.9; }
   setVolumes(v) { Object.assign(this.vol, v); this.applyVolumes(); }
   get now() { return this.ctx ? this.ctx.currentTime : 0; }
   setListener(pos, fwd, up) {
@@ -163,9 +168,15 @@ export class AudioEngine {
       case 'wind_gust': this.noise(this.pink, t, 3, d, { f: 250, f2: 600, q: 0.6, gain: 0.35 * v, a: 1.0 }); break;
       case 'heartbeat': this.tone(t, 0.12, d, { f: 55, f2: 40, gain: 0.5 * v }); this.tone(t + 0.22, 0.14, d, { f: 50, f2: 38, gain: 0.4 * v }); break;
       case 'pant': this.noise(this.pink, t, 0.25, d, { f: 1200, q: 0.8, gain: 0.18 * v, a: 0.05 }); this.noise(this.pink, t + 0.35, 0.3, d, { f: 800, q: 0.8, gain: 0.15 * v, a: 0.05 }); break;
-      case 'ui': this.tone(t, 0.08, d, { f: 660, gain: 0.08 * v }); break;
-      case 'stinger': { const g = this.ctx.createGain(); g.connect(d); for (const f of [61, 65.4, 92.5, 138.6]) this.tone(t, 2.5, g, { f, type: 'sawtooth', gain: 0.08 * v, a: 0.02 }); this.noise(this.white, t, 1.5, d, { f: 3000, f2: 300, gain: 0.3 * v }); break; }
-      case 'win': for (let i = 0; i < 4; i++) this.tone(t + i * 0.25, 1.5, d, { f: [261, 329, 392, 523][i], gain: 0.12 * v, type: 'triangle', a: 0.05 }); break;
+      case 'ui': // clique: toque seco de madeira + nota grave curta
+        this.noise(this.white, t, 0.025, d, { f: 2600, q: 2.5, gain: 0.18 * v, a: 0.001 });
+        this.tone(t, 0.12, d, { f: 330, f2: 220, gain: 0.09 * v, a: 0.002 });
+        this.tone(t, 0.06, d, { f: 990, gain: 0.025 * v, a: 0.001 });
+        break;
+      case 'ui_hover': this.noise(this.white, t, 0.018, d, { f: 3800, q: 4, gain: 0.05 * v, a: 0.001 }); this.tone(t, 0.04, d, { f: 1480, gain: 0.012 * v, a: 0.001 }); break;
+      case 'stinger': {
+        if (this.music && this.music.ready) { this.music.stinger(opts.volume && opts.volume < 0.75 ? 'lose' : 'death'); break; } const g = this.ctx.createGain(); g.connect(d); for (const f of [61, 65.4, 92.5, 138.6]) this.tone(t, 2.5, g, { f, type: 'sawtooth', gain: 0.08 * v, a: 0.02 }); this.noise(this.white, t, 1.5, d, { f: 3000, f2: 300, gain: 0.3 * v }); break; }
+      case 'win': if (this.music && this.music.ready) { this.music.stinger('win'); break; } for (let i = 0; i < 4; i++) this.tone(t + i * 0.25, 1.5, d, { f: [261, 329, 392, 523][i], gain: 0.12 * v, type: 'triangle', a: 0.05 }); break;
     }
   }
   creak(t, dest, gain, dur = 0.8, pitch = 1) {

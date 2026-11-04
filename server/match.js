@@ -6,6 +6,7 @@ import { PHASES, PLAYER, CREATURE, AI, CELL, LEVELS, T, NET } from '../shared/co
 import { makeRng } from '../shared/rng.js';
 import { Creature, STATE_LABEL } from './creature.js';
 import { ScentGrid } from './scent.js';
+import { Director } from './director.js';
 import { makeSoundEvent, isPlayerMoving, angleDiff } from './senses.js';
 
 const fin = (v) => typeof v === 'number' && Number.isFinite(v);
@@ -30,6 +31,7 @@ export class Match {
     this.litLamps = this.map.lamps.filter(l => l.state !== 'off');
     this.distributeKeys();
     players.forEach((p, i) => this.addPlayer(p.id, p.name, i));
+    this.director = new Director(this); // ritmo/pressão (não dá posição exata à criatura)
     this.creature = new Creature(this);
     this.startT = 0;
   }
@@ -165,6 +167,7 @@ export class Match {
       this.keyIn.delete(c.id);
       this.keysCollected.push({ key: keyId, by: p.id, t: this.t });
       p.keys++;
+      this.director.onKey();
       this.emit({ type: 'key', container: c.id, key: keyId, by: p.id, name: p.name, count: this.keysCollected.length, needed: this.keysNeeded });
       this.emitSound('key_pickup', c.x, p.y + 0.8, c.z, c.level, { by: p.id, source: 'player' });
       return { ok: true, key: keyId };
@@ -265,6 +268,7 @@ export class Match {
     }
     this.pruneAcc += dt;
     if (this.pruneAcc > 2) { this.pruneAcc = 0; this.scent.prune(t); }
+    this.director.update(dt);
     this.creature.update(dt);
     const c = this.creature;
     // morte por contato (servidor confirma distância + ausência de parede)
@@ -275,6 +279,7 @@ export class Match {
       if (d < CREATURE.contactDist && this.world.noWallBetween(c.level, c.x, c.z, p.x, p.z)) {
         this.killPlayer(p, 'contato');
         if (c.state === 'chase' || c.state === 'attack') { c.setState('kill', 1.9); c.killed = p.id; }
+        this.director.onEncounterEnd('morte');
       }
     }
     // fuga
@@ -350,11 +355,16 @@ export class Match {
     return {
       time: +this.t.toFixed(1), seed: this.seed, genVersion: this.map.version, mapHash: this.map.hash, fallback: this.map.fallbackFrom || null,
       creature: {
-        state: c.state, label: STATE_LABEL[c.state] || c.state, anim: c.anim, x: +c.x.toFixed(1), z: +c.z.toFixed(1), level: c.level,
+        state: c.state, label: (STATE_LABEL[c.state] || c.state) + ` · ameaça ${Math.round(this.director.menace * 100)}%` + (this.director.target ? ` → ${this.director.target.kind}: ${this.director.target.room} (andar ${this.director.target.level})` : ''), anim: c.anim, x: +c.x.toFixed(1), z: +c.z.toFixed(1), level: c.level,
         speed: +c.speed.toFixed(2), senses: c.senseSummary(), target: c.target, lastSound: c.lastSound, lastInvestigated: c.lastInvestigated,
         sniff: { ...c.sniffInfo, nextIn: Number.isFinite(c.nextSniffT) ? +(c.nextSniffT - this.t).toFixed(1) : null }, scentCells: this.scent.size,
         tracking: c.vis ? c.vis.tracked : [],
+        menace: +this.director.menace.toFixed(2),
+        director: this.director.diag(),
+        passBy: c.passBy ? { stage: c.passBy.stage, via: c.passBy.via.room, then: c.passBy.then.room } : null,
+        maxStill: +c.maxStill.toFixed(1),
       },
+      director: this.director.diag(),
       keys: { collected: this.keysCollected.length, needed: this.keysNeeded, containers: this.keyContainers },
       exitOpen: this.exitOpen,
       recentSounds: this.sounds.slice(-6).map(s => ({ type: s.type, level: s.level, range: +s.range.toFixed(1), heard: !!s.heardBy, t: +s.t.toFixed(1) })),

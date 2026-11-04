@@ -118,6 +118,8 @@ try {
   check('prompt de interação aparece ao mirar no esconderijo', !!tgt && /Abrir|Pegar/.test(tgt), tgt);
   if (tgt && /Abrir/.test(tgt)) { await A.keyboard.press('KeyE'); await sleep(2500); }
   else await send(A, { t: 'act', kind: 'container', id: k.id });
+  // se o E abriu um móvel vizinho (não o da chave), abre o certo pelo protocolo
+  if (!(await A.evaluate((id) => window.__game.view.containers[id].keyShown, k.id))) { log('E abriu outro móvel; abrindo o esconderijo da chave'); await send(A, { t: 'act', kind: 'container', id: k.id }); }
   await A.waitForFunction((id) => window.__game.view.containers[id].keyShown, { timeout: 30000 }, k.id);
   await sleep(2500);
   await hq(A, 'medium');

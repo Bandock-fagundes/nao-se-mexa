@@ -181,7 +181,7 @@ test('MP: desconexão e reconexão com token restauram o estado; anfitrião migr
   await C.wait(m => m.t === 'resume_fail', 3000, 'resume_fail');
   // migração de anfitrião: A cai, B2 vira anfitrião após alguns segundos
   A.close();
-  const h = await B2.wait(m => m.t === 'host', 8000, 'novo anfitrião');
+  const h = await B2.wait(m => m.t === 'host', 15000, 'novo anfitrião');
   assert.equal(h.id, idB);
   B2.close(); C.close();
 });

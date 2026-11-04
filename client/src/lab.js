@@ -4,6 +4,7 @@ import { buildMaterials } from './render/materials.js';
 import { buildCreature } from './render/creature.js';
 import { buildHand, HandAnimator } from './render/hand.js';
 import { buildProp } from './render/props.js';
+import { buildTeammate, animateTeammate } from './render/human.js';
 const q = new URLSearchParams(location.search);
 const view = q.get('v') || 'creature';
 const W = 1280, H = 720;
@@ -13,7 +14,7 @@ document.body.appendChild(renderer.domElement);
 const scene = new THREE.Scene(); scene.background = new THREE.Color(0x15171c);
 const cam = new THREE.PerspectiveCamera(45, W / H, 0.01, 100);
 scene.add(new THREE.HemisphereLight(0x8090b0, 0x302010, 1.2));
-const key = new THREE.DirectionalLight(0xffe0c0, 2.5); key.position.set(3, 5, 4); key.castShadow = true; scene.add(key);
+const key = new THREE.DirectionalLight(q.get('neutral') ? 0xfff4ea : 0xffe0c0, 2.5); key.position.set(3, 5, 4); key.castShadow = true; scene.add(key);
 const rim = new THREE.DirectionalLight(0x6080ff, 1.5); rim.position.set(-3, 3, -4); scene.add(rim);
 const M = buildMaterials(512);
 const fg = new THREE.PlaneGeometry(10, 10); fg.setAttribute('color', new THREE.Float32BufferAttribute(new Array(fg.attributes.position.count * 3).fill(1), 3));
@@ -22,7 +23,9 @@ if (view === 'creature') {
   const c = buildCreature(M); scene.add(c.root);
   const anim = q.get('a') || 'idle', at = +(q.get('t') || 0.3), speed = +(q.get('s') || 0);
   c.root.rotation.y = +(q.get('r') || 0.6);
-  for (let i = 0; i < 60; i++) c.anim.update(1 / 30, { anim, animT: at, speed, headYaw: +(q.get('hy') || 0), headPitch: +(q.get('hp') || 0), yaw: 0 });
+  const n = +(q.get('n') || 120), fdt = +(q.get('dt') || 1 / 60);
+  for (let i = 0; i < n; i++) c.anim.update(fdt, { anim, animT: at + i * fdt, speed, headYaw: +(q.get('hy') || 0), headPitch: +(q.get('hp') || 0), yaw: 0 });
+  window.__step = (k, dt2 = fdt) => { for (let i = 0; i < k; i++) c.anim.update(dt2, { anim, animT: at, speed, headYaw: 0, headPitch: 0, yaw: 0 }); renderer.render(scene, cam); };
   cam.position.set(+(q.get('cx') || 0), +(q.get('cy') || 1.7), +(q.get('cz') || 5.2)); cam.lookAt(0, +(q.get('ly') || 1.5), 0);
 } else if (view === 'hand') {
   scene.background = new THREE.Color(0x2a2420);
@@ -31,9 +34,24 @@ if (view === 'creature') {
   cam.fov = 70; cam.updateProjectionMatrix(); cam.updateMatrixWorld(true);
   const pl = new THREE.PointLight(0xffe0c0, 2, 3); pl.position.set(0.5, 2.2, 2); scene.add(pl);
   if (q.get('close')) { const c2 = new THREE.PerspectiveCamera(30, W / H, 0.01, 10); const hp = new THREE.Vector3(); h.grip.getWorldPosition(hp); c2.position.set(hp.x + 0.25, hp.y + 0.18, hp.z + 0.25); c2.lookAt(hp); renderer.render(scene, c2); window.__done = true; throw 'done'; }
+} else if (view === 'mate') {
+  const t = buildTeammate(M, +(q.get('i') || 0)); scene.add(t.root); t.root.rotation.y = +(q.get('r') || 0.6);
+  const n = +(q.get('n') || 90), sp = +(q.get('s') || 0);
+  for (let i = 0; i < n; i++) animateTeammate(t, 1 / 60, { speed: sp, crouch: !!q.get('c'), alive: q.get('dead') ? false : true, fl: true, pitch: +(q.get('p') || 0) });
+  cam.position.set(+(q.get('cx') || 0), +(q.get('cy') || 1.2), +(q.get('cz') || 3.6)); cam.lookAt(0, +(q.get('ly') || 0.95), 0);
 } else {
   const g = buildProp(view, +(q.get('w') || 1.5), +(q.get('d') || 0.5), M, 1); scene.add(g);
   cam.position.set(2, 1.6, 3); cam.lookAt(0, 0.8, 0);
+}
+if (q.get('mood')) {
+  // clima do jogo: escuro, lanterna saindo da câmera, luz quente fraca ao fundo
+  scene.background = new THREE.Color(0x040405); scene.fog = new THREE.FogExp2(0x07080b, 0.05);
+  scene.traverse(o => { if (o.isLight) o.intensity *= 0.12; });
+  const sp = new THREE.SpotLight(0xe8f0ff, +(q.get('fl') || 28), 30, 0.5, 0.5, 1.0); sp.castShadow = true; sp.shadow.mapSize.set(1024, 1024);
+  sp.position.copy(cam.position).add(new THREE.Vector3(0.25, -0.15, 0)); const tg = new THREE.Vector3(); cam.getWorldDirection(tg); sp.target.position.copy(cam.position).addScaledVector(tg, 6);
+  scene.add(sp, sp.target);
+  const lamp = new THREE.PointLight(0xffa860, 6, 10, 1.6); lamp.position.set(-2.5, 2.4, -2.5); scene.add(lamp);
+  renderer.toneMappingExposure = 0.95; renderer.outputColorSpace = THREE.SRGBColorSpace;
 }
 renderer.render(scene, cam);
 window.__done = true;

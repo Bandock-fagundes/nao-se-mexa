@@ -5,6 +5,8 @@ import { AudioEngine } from './audio.js';
 import { Renderer, QUALITY } from './render/renderer.js';
 import { buildMaterials } from './render/materials.js';
 import { Game } from './game.js';
+import { runIntro, shouldShowIntro } from './intro.js';
+import { LoadingScreen, nextPaint } from './loading.js';
 import { generateMansion, validateMap } from '../../shared/mapgen.js';
 import { PHASES, W, D, T, CELL } from '../../shared/config.js';
 
@@ -14,7 +16,7 @@ const params = new URLSearchParams(location.search);
 const isTest = location.pathname.startsWith('/testar');
 
 // ---------------- configurações e estatísticas ----------------
-const DEFAULTS = { quality: 'medium', resScale: 1, master: 0.8, sfx: 0.9, ambient: 0.7, sensitivity: 1, fov: 72, invertY: false };
+const DEFAULTS = { quality: 'medium', resScale: 1, master: 0.8, sfx: 0.9, ambient: 0.7, music: 0.6, sensitivity: 1, fov: 72, invertY: false };
 function load(k, d) { try { return { ...d, ...JSON.parse(localStorage.getItem(k) || '{}') }; } catch { return { ...d }; } }
 const app = {
   settings: load('nsm_settings', DEFAULTS),
@@ -25,7 +27,10 @@ const app = {
 if (params.get('quality') && QUALITY[params.get('quality')]) app.settings.quality = params.get('quality');
 app.saveSettings = () => localStorage.setItem('nsm_settings', JSON.stringify(app.settings));
 app.saveStats = () => localStorage.setItem('nsm_stats', JSON.stringify(app.stats));
-app.audio.vol = { master: app.settings.master, sfx: app.settings.sfx, ambient: app.settings.ambient };
+app.audio.vol = { master: app.settings.master, sfx: app.settings.sfx, ambient: app.settings.ambient, music: app.settings.music };
+app.music = app.audio.music; // window.__music.setTension(0..1) / .stinger('death'|'win')
+const isE2E = (params.has('e2e') || navigator.webdriver) && !params.has('showload'); // ?showload força a tela de carregamento completa (capturas)
+app.loading = new LoadingScreen(document.querySelector('#loading'), { lite: isE2E });
 app.input = new Input($('#stage'));
 window.__app = app;
 
@@ -33,10 +38,35 @@ window.__app = app;
 function show(id) {
   $$('.screen').forEach(s => s.classList.remove('on'));
   if (id) $('#' + id).classList.add('on');
+  const prev = app.screen;
   app.screen = id;
+  if (id === 'loading') { if (prev !== 'loading') app.loading.open(app.phase); }
+  else if (prev === 'loading' && app.loading.active && id) app.loading.close(); // saiu para um menu (erro etc.)
+  updateMusic();
   if (id === 'menu') renderStats();
   if (id === 'settings') fillSettings();
 }
+// trilha conforme a tela
+function updateMusic() {
+  if (app.introRunning) return app.music.setMode('none');
+  if (app.screen === 'loading') return app.music.setMode('loading');
+  if (app.game && app.playing && !app.game.ended) return app.music.setMode('game');
+  if (app.game) return app.music.setMode('none');
+  app.music.setMode(app.screen ? 'menu' : 'none');
+}
+app.updateMusic = updateMusic;
+// sons de interface: clique e passagem do mouse em botões
+let hoverT = 0, hoverEl = null;
+document.addEventListener('pointerover', (e) => {
+  const b = e.target.closest && e.target.closest('button, .btn, select'); if (!b || b === hoverEl || b.disabled) { if (!b) hoverEl = null; return; }
+  hoverEl = b; const now = performance.now(); if (now - hoverT < 60 || app.playing && app.input.locked) return; hoverT = now;
+  if (app.audio.enabled && !app.audio.blocked) app.audio.play('ui_hover', null);
+});
+document.addEventListener('click', (e) => {
+  const b = e.target.closest && e.target.closest('button, .btn'); if (!b || b.disabled || b.dataset.go) return; // data-go já toca
+  app.audio.init(); app.audio.play('ui', null);
+  if (!app.game) updateMusic();
+}, true);
 function overlay(id, on) { $('#' + id).classList.toggle('hidden', !on); }
 function hideOverlays() { for (const id of ['pause', 'death', 'escaped', 'end', 'reconnecting', 'disconnected', 'clickToPlay']) overlay(id, false); }
 $$('[data-go]').forEach(b => b.addEventListener('click', () => { app.audio.init(); app.audio.play('ui'); if (b.dataset.mode) app.modeHint = b.dataset.mode; show(b.dataset.go); }));
@@ -127,18 +157,18 @@ const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt
 // ---------------- configurações ----------------
 function fillSettings() {
   const s = app.settings;
-  $('#setQuality').value = s.quality; $('#setRes').value = s.resScale; $('#setMaster').value = s.master; $('#setSfx').value = s.sfx; $('#setAmb').value = s.ambient; $('#setSens').value = s.sensitivity; $('#setFov').value = s.fov; $('#setInvert').checked = !!s.invertY;
+  $('#setQuality').value = s.quality; $('#setRes').value = s.resScale; $('#setMaster').value = s.master; $('#setSfx').value = s.sfx; $('#setAmb').value = s.ambient; $('#setMusic').value = s.music ?? 0.6; $('#setSens').value = s.sensitivity; $('#setFov').value = s.fov; $('#setInvert').checked = !!s.invertY;
   labels();
 }
-function labels() { const s = app.settings; $('#vRes').textContent = Math.round(s.resScale * 100) + '%'; $('#vMaster').textContent = Math.round(s.master * 100) + '%'; $('#vSfx').textContent = Math.round(s.sfx * 100) + '%'; $('#vAmb').textContent = Math.round(s.ambient * 100) + '%'; $('#vSens').textContent = (+s.sensitivity).toFixed(2) + '×'; $('#vFov').textContent = s.fov + '°'; }
+function labels() { const s = app.settings; $('#vRes').textContent = Math.round(s.resScale * 100) + '%'; $('#vMaster').textContent = Math.round(s.master * 100) + '%'; $('#vSfx').textContent = Math.round(s.sfx * 100) + '%'; $('#vAmb').textContent = Math.round(s.ambient * 100) + '%'; $('#vMusic').textContent = Math.round((s.music ?? 0.6) * 100) + '%'; $('#vSens').textContent = (+s.sensitivity).toFixed(2) + '×'; $('#vFov').textContent = s.fov + '°'; }
 function applySettings() {
   const s = app.settings;
-  s.quality = $('#setQuality').value; s.resScale = +$('#setRes').value; s.master = +$('#setMaster').value; s.sfx = +$('#setSfx').value; s.ambient = +$('#setAmb').value; s.sensitivity = +$('#setSens').value; s.fov = +$('#setFov').value; s.invertY = $('#setInvert').checked;
+  s.quality = $('#setQuality').value; s.resScale = +$('#setRes').value; s.master = +$('#setMaster').value; s.sfx = +$('#setSfx').value; s.ambient = +$('#setAmb').value; s.music = +$('#setMusic').value; s.sensitivity = +$('#setSens').value; s.fov = +$('#setFov').value; s.invertY = $('#setInvert').checked;
   app.saveSettings(); labels();
-  app.audio.setVolumes({ master: s.master, sfx: s.sfx, ambient: s.ambient });
+  app.audio.setVolumes({ master: s.master, sfx: s.sfx, ambient: s.ambient, music: s.music });
   if (app.renderer) app.renderer.applySettings(s);
 }
-for (const id of ['#setQuality', '#setRes', '#setMaster', '#setSfx', '#setAmb', '#setSens', '#setFov', '#setInvert']) $(id).addEventListener('input', applySettings);
+for (const id of ['#setQuality', '#setRes', '#setMaster', '#setSfx', '#setAmb', '#setMusic', '#setSens', '#setFov', '#setInvert']) $(id).addEventListener('input', applySettings);
 $('#btnTestSound').addEventListener('click', () => { app.audio.init(); app.audio.play('door_rusty', null); setTimeout(() => app.audio.play('cstep', null), 700); });
 $('#settingsBack').addEventListener('click', () => { if (app.fromPause) { app.fromPause = false; show(null); overlay('pause', true); } else show('menu'); });
 // ---------------- rede ----------------
@@ -166,33 +196,47 @@ net.on('fatal', () => { overlay('reconnecting', false); overlay('disconnected', 
 $('#btnDcMenu').addEventListener('click', () => { location.href = isTest ? '/testar' : '/'; });
 
 // ---------------- partida ----------------
-function startGame(m) {
+async function startGame(m) {
   hideOverlays();
-  show('loading'); $('#loadingText').textContent = 'Gerando a mansão (semente ' + m.seed + ')…';
-  setTimeout(() => {
-    try {
-      if (!app.renderer) {
-        app.renderer = new Renderer($('#stage'), { ...app.settings, preserve: params.has('e2e') });
-        app.M = buildMaterials(app.renderer.q.tex);
-      }
-      stopGame(true);
-      app.game = new Game(app, m);
-      if (!app.game.hashOk) toast('Aviso: mapa diferente do servidor (versões diferentes). Recarregue a página.', 'warn');
-      if (!m.resumed) { app.stats.started = (app.stats.started || 0) + 1; app.saveStats(); }
-      show(null);
-      $('#hud').classList.remove('hidden');
-      $('#diag').classList.toggle('hidden', !(m.test && app.diagOn));
-      app.input.enabled = true;
-      if (!app.input.locked && !params.has('e2e')) overlay('clickToPlay', true);
-      app.playing = true;
-      if (!app.loop) { app.last = performance.now(); app.loop = true; requestAnimationFrame(frame); }
-      if (app.game.p.alive === false) { app.game.deathT = performance.now() - 5000; app.game.deathCam = { yaw: 0, pitch: 0 }; }
-    } catch (e) { console.error(e); toast('Erro ao iniciar: ' + e.message, 'warn'); show('menu'); }
-  }, 30);
+  const token = app.loadToken = (app.loadToken || 0) + 1;
+  if (m.phase) app.phase = m.phase;
+  show('loading'); app.loading.setPhase(m.phase || app.phase);
+  const L = app.loading;
+  try {
+    await L.step(0.12, 'Gerando a mansão (semente ' + m.seed + ')…');
+    if (!app.renderer) {
+      app.renderer = new Renderer($('#stage'), { ...app.settings, preserve: params.has('e2e') });
+      await L.step(0.28, 'Preparando o renderizador…');
+      app.M = buildMaterials(app.renderer.q.tex);
+    }
+    L.setMaterials(app.M);
+    await L.step(0.5, 'Texturas e materiais prontos. Mobiliando os cômodos…');
+    if (token !== app.loadToken) return;
+    stopGame(true);
+    app.game = new Game(app, m);
+    await L.step(0.82, 'Escondendo as chaves…');
+    if (!app.game.hashOk) toast('Aviso: mapa diferente do servidor (versões diferentes). Recarregue a página.', 'warn');
+    if (!m.resumed) { app.stats.started = (app.stats.started || 0) + 1; app.saveStats(); }
+    // compila os shaders do jogo com um quadro antes de revelar
+    try { app.renderer.render(); } catch { }
+    await L.step(0.94, 'Acordando a criatura…');
+    await L.finish(isE2E ? 0 : 2500);
+    if (token !== app.loadToken || !app.game) return;
+    L.leave();
+    show(null);
+    $('#hud').classList.remove('hidden');
+    $('#diag').classList.toggle('hidden', !(m.test && app.diagOn));
+    app.input.enabled = true;
+    if (!app.input.locked && !params.has('e2e')) overlay('clickToPlay', true);
+    app.playing = true; updateMusic();
+    if (!app.loop) { app.last = performance.now(); app.loop = true; requestAnimationFrame(frame); }
+    if (app.game.p.alive === false) { app.game.deathT = performance.now() - 5000; app.game.deathCam = { yaw: 0, pitch: 0 }; }
+  } catch (e) { console.error(e); L.close(); toast('Erro ao iniciar: ' + e.message, 'warn'); show('menu'); }
 }
 function stopGame(keepHud) {
   if (app.game) { app.game.dispose(); app.game = null; }
   app.playing = false;
+  app.music.setTension(0, false);
   if (!keepHud) { $('#hud').classList.add('hidden'); $('#diag').classList.add('hidden'); app.input.enabled = false; app.input.unlock(); }
 }
 function leaveToMenu() {
@@ -200,12 +244,32 @@ function leaveToMenu() {
   stopGame(); hideOverlays();
   show(isTest ? 'testar' : 'menu');
 }
-let diagAcc = 0;
+let diagAcc = 0, musicAcc = 0, lastEnded = false;
+// tensão automática da música: estado e distância da criatura (game.js pode chamar window.__music.setTension direto)
+const STATE_T = { chase: 1, attack: 1, kill: 1, persegue: 1, perseguindo: 1, investigate: 0.6, investigando: 0.6, search: 0.55, procurando: 0.55, farejando: 0.5, sniff: 0.5, hear: 0.5, alert: 0.7 };
+function musicTension(dt) {
+  const g = app.game;
+  if (g.ended !== lastEnded) { lastEnded = g.ended; updateMusic(); }
+  musicAcc += dt; if (musicAcc < 0.2) return; musicAcc = 0;
+  try {
+    if (!g.p.alive || g.p.escaped || g.ended) return app.music.autoTension(0.15);
+    const cs = g.crState || (g.lastSnap && g.lastSnap.creature);
+    let k = 0.12;
+    if (cs) {
+      const d = cs.level === g.p.level ? Math.hypot(cs.x - g.p.x, cs.z - g.p.z) : 40 + Math.abs(cs.level - g.p.level) * 10;
+      k = Math.max(k, Math.max(0, 1 - d / 26) * 0.75);
+      const st = String(cs.state || '').toLowerCase();
+      for (const key in STATE_T) if (st.includes(key)) { k = Math.max(k, STATE_T[key] * (d < 30 ? 1 : 0.6)); break; }
+    }
+    app.music.autoTension(k);
+  } catch { }
+}
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - app.last) / 1000); app.last = now;
   if (!app.game) return;
   try { app.game.update(dt); } catch (e) { console.error(e); }
+  musicTension(dt);
   if (!app.noRender) app.renderer.render(); // noRender: usado só pelo teste E2E para poupar CPU entre capturas
   diagAcc += dt;
   if (diagAcc > 0.25 && !$('#diag').classList.contains('hidden')) { diagAcc = 0; renderDiag(); }
@@ -328,6 +392,13 @@ function renderDiag() {
 }
 
 // ---------------- início ----------------
+// a 1ª interação desbloqueia o som e começa o tema do menu
+const firstGesture = () => { app.audio.init(); updateMusic(); };
+window.addEventListener('pointerdown', firstGesture, { once: true }); window.addEventListener('keydown', firstGesture, { once: true });
+if (shouldShowIntro(params, isTest)) {
+  app.introRunning = true;
+  runIntro(app.audio).then(() => { app.introRunning = false; updateMusic(); });
+}
 show(isTest ? 'testar' : 'menu');
 if (params.get('sala')) {
   $('#joinCode').value = params.get('sala').toUpperCase();

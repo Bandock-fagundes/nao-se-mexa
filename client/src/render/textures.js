@@ -201,26 +201,31 @@ export function buildTextures(size = 512) {
   }), [1, 1], 2, aniso);
   // ---------- pele da criatura ----------
   T.creatureSkin = set(triple(S, S, (a, h, ro, w, hh) => {
-    a.fillStyle = '#b4b5aa'; a.fillRect(0, 0, w, hh); ro.fillStyle = '#d8d8d8'; ro.fillRect(0, 0, w, hh);
-    for (let i = 0; i < 70; i++) { const cx = r() * w, cy = r() * hh; const gr = a.createRadialGradient(cx, cy, 0, cx, cy, 30 + r() * 70); gr.addColorStop(0, `rgba(${110 + r() * 30},${110 + r() * 25},${70 + r() * 20},0.3)`); gr.addColorStop(1, 'rgba(0,0,0,0)'); a.fillStyle = gr; a.fillRect(0, 0, w, hh); }
-    // veias ramificadas
+    // pele pálida, quase cinza-marfim, com manchas frias, veias escuras e rugas finas
+    a.fillStyle = '#d6d3c8'; a.fillRect(0, 0, w, hh); ro.fillStyle = '#d4d4d4'; ro.fillRect(0, 0, w, hh);
+    for (let i = 0; i < 90; i++) { const cx = r() * w, cy = r() * hh; const gr = a.createRadialGradient(cx, cy, 0, cx, cy, 25 + r() * 80); const warm = r() < 0.35; gr.addColorStop(0, warm ? `rgba(${170 + r() * 30},${130 + r() * 20},${125 + r() * 20},0.22)` : `rgba(${120 + r() * 30},${125 + r() * 25},${120 + r() * 20},0.22)`); gr.addColorStop(1, 'rgba(0,0,0,0)'); a.fillStyle = gr; a.fillRect(0, 0, w, hh); }
+    // veias ramificadas (azul-arroxeadas, escuras) levemente em relevo
     const vein = (x, y, ang, len, wd, depth) => {
       for (let s = 0; s < len; s++) {
         const nx = x + Math.cos(ang) * 4, ny = y + Math.sin(ang) * 4;
-        a.strokeStyle = `rgba(${40 + r() * 20},${30 + r() * 15},${50 + r() * 20},${0.5 + 0.3 * wd / 3})`; a.lineWidth = wd;
+        a.strokeStyle = `rgba(${42 + r() * 18},${36 + r() * 14},${52 + r() * 16},${0.45 + 0.35 * wd / 3})`; a.lineWidth = wd;
         a.beginPath(); a.moveTo(x, y); a.lineTo(nx, ny); a.stroke();
-        h.strokeStyle = `rgba(230,230,230,0.8)`; h.lineWidth = wd + 1; h.beginPath(); h.moveTo(x, y); h.lineTo(nx, ny); h.stroke();
+        a.strokeStyle = `rgba(70,55,75,0.1)`; a.lineWidth = wd + 4; a.beginPath(); a.moveTo(x, y); a.lineTo(nx, ny); a.stroke();
+        h.strokeStyle = `rgba(215,215,215,0.7)`; h.lineWidth = wd + 1; h.beginPath(); h.moveTo(x, y); h.lineTo(nx, ny); h.stroke();
         x = nx; y = ny; ang += (r() - 0.5) * 0.6;
-        if (depth > 0 && r() < 0.06) vein(x, y, ang + (r() < 0.5 ? 0.8 : -0.8), len * 0.5, wd * 0.6, depth - 1);
+        if (depth > 0 && r() < 0.07) vein(x, y, ang + (r() < 0.5 ? 0.8 : -0.8), len * 0.5, wd * 0.6, depth - 1);
       }
     };
-    for (let i = 0; i < 40; i++) vein(r() * w, r() * hh, r() * 6.28, 30 + r() * 40, 1 + r() * 2.2, 2);
-    // rugas
-    for (let i = 0; i < 260; i++) { const x = r() * w, y = r() * hh; h.strokeStyle = 'rgba(40,40,40,0.5)'; h.lineWidth = 1; h.beginPath(); h.moveTo(x, y); h.quadraticCurveTo(x + 6, y + (r() - 0.5) * 6, x + 12 + r() * 10, y + (r() - 0.5) * 4); h.stroke(); a.strokeStyle = 'rgba(60,40,35,0.18)'; a.beginPath(); a.moveTo(x, y); a.lineTo(x + 14, y + 2); a.stroke(); }
-    // manchas escuras / úmidas
-    for (let i = 0; i < 18; i++) { ro.fillStyle = 'rgba(120,120,120,0.35)'; ro.beginPath(); ro.arc(r() * w, r() * hh, 10 + r() * 30, 0, 7); ro.fill(); }
-    noise(a, w, hh, 0.3); noise(h, w, hh, 0.5, '0,0,0', 0.25);
-  }), [2, 2], 4, aniso);
+    for (let i = 0; i < 46; i++) vein(r() * w, r() * hh, r() * 6.28, 30 + r() * 45, 0.8 + r() * 2.2, 2);
+    // rugas e dobras
+    for (let i = 0; i < 320; i++) { const x = r() * w, y = r() * hh; h.strokeStyle = 'rgba(40,40,40,0.5)'; h.lineWidth = 1; h.beginPath(); h.moveTo(x, y); h.quadraticCurveTo(x + 6, y + (r() - 0.5) * 6, x + 12 + r() * 10, y + (r() - 0.5) * 4); h.stroke(); a.strokeStyle = 'rgba(70,60,60,0.14)'; a.beginPath(); a.moveTo(x, y); a.lineTo(x + 14, y + 2); a.stroke(); }
+    // poros
+    for (let i = 0; i < w * hh * 0.006; i++) { const x = r() * w, y = r() * hh; h.fillStyle = 'rgba(70,70,70,0.35)'; h.fillRect(x, y, 1, 1); }
+    // áreas úmidas um pouco menos foscas (sem virar plástico)
+    for (let i = 0; i < 18; i++) { ro.fillStyle = 'rgba(150,150,150,0.3)'; ro.beginPath(); ro.arc(r() * w, r() * hh, 10 + r() * 30, 0, 7); ro.fill(); }
+    noise(a, w, hh, 0.18); noise(h, w, hh, 0.25, '0,0,0', 0.06);
+    h.filter = 'blur(0.6px)'; h.drawImage(h.canvas, 0, 0); h.filter = 'none';
+  }), [2, 2], 3, aniso);
   // ---------- pele humana (mão) ----------
   T.handSkin = set(triple(256, 256, (a, h, ro, w, hh) => {
     a.fillStyle = '#c99478'; a.fillRect(0, 0, w, hh); ro.fillStyle = '#9a9a9a'; ro.fillRect(0, 0, w, hh);

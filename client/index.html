@@ -87,6 +87,7 @@
         <label class="field">Volume geral <span id="vMaster"></span><input type="range" id="setMaster" min="0" max="1" step="0.05" /></label>
         <label class="field">Efeitos sonoros <span id="vSfx"></span><input type="range" id="setSfx" min="0" max="1" step="0.05" /></label>
         <label class="field">Ambiente <span id="vAmb"></span><input type="range" id="setAmb" min="0" max="1" step="0.05" /></label>
+        <label class="field">Música <span id="vMusic"></span><input type="range" id="setMusic" min="0" max="1" step="0.05" /></label>
         <label class="field">Sensibilidade do mouse <span id="vSens"></span><input type="range" id="setSens" min="0.2" max="3" step="0.05" /></label>
         <label class="field">Campo de visão <span id="vFov"></span><input type="range" id="setFov" min="60" max="95" step="1" /></label>
         <label class="check"><input type="checkbox" id="setInvert" /> Inverter eixo vertical</label>
@@ -155,7 +156,18 @@
       </div>
     </section>
     <!-- ===== CARREGANDO ===== -->
-    <section id="loading" class="screen center"><div><div class="spinner"></div><p id="loadingText">Gerando a mansão…</p></div></section>
+    <section id="loading" class="screen">
+      <canvas id="loadCanvas"></canvas>
+      <div class="ld-shade"></div>
+      <div class="ld-ui">
+        <div class="ld-top"><div class="ld-title">NÃO SE MEXA!</div><div class="ld-phase" id="ldPhase">FASE 1 — A CRIATURA VÊ</div></div>
+        <div class="ld-bottom">
+          <p class="ld-tipbox"><span class="ld-tiplabel">DICA</span><span id="ldTip" class="ld-tip"></span></p>
+          <div class="ld-bar"><div id="ldFill"></div></div>
+          <p id="loadingText" class="ld-step">Gerando a mansão…</p>
+        </div>
+      </div>
+    </section>
     <!-- ===== HUD ===== -->
     <div id="hud" class="hidden">
       <div id="hudTL"><div id="hPhase"></div><div id="hKeys"></div><div id="hObj"></div></div>

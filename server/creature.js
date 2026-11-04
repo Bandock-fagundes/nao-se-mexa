@@ -1,6 +1,6 @@
 // Criatura: máquina de estados autoritativa no servidor.
 // Ela só conhece jogadores pelo que seus sentidos (visão / audição / olfato) da fase permitem.
-import { AI, CREATURE, CELL, LEVELS } from '../shared/config.js';
+import { AI, CREATURE, CELL, LEVELS, W } from '../shared/config.js';
 import { visionCheck, hearingCheck, angleDiff } from './senses.js';
 
 export const STATE_LABEL = {
@@ -8,7 +8,7 @@ export const STATE_LABEL = {
   chase: 'Perseguindo jogador', attack: 'Atacando', kill: 'Matando', hear: 'Reagindo a som',
   investigate: 'Investigando som', inspect: 'Investigando o local', search: 'Procurando pessoa (última posição)',
   sniff: 'Farejando', track: 'Rastreando cheiro', recover: 'Recuperando-se da investigação', return: 'Retornando à exploração',
-  door: 'Abrindo porta', idle: 'Despertando', hold: 'Parada (teste)', freeze: 'Congelada (teste)',
+  door: 'Abrindo porta', idle: 'Despertando', sweep: 'Vasculhando o cômodo', hold: 'Parada (teste)', freeze: 'Congelada (teste)',
 };
 
 export class Creature {
@@ -20,7 +20,7 @@ export class Creature {
     this.state = 'idle'; this.stateT = 0; this.anim = 'idle'; this.animT = 0;
     this.speed = 0; this.path = null; this.pathIdx = 0; this.goal = null; this.repathT = 0;
     this.stuckT = 0; this.stuckRef = { x: this.x, z: this.z }; this.repathFails = 0;
-    this.target = null; this.lastKnown = null; this.lastSeenT = -1e9; this.detectT = new Map();
+    this.target = null; this.lastKnown = null; this.lastSeenT = -1e9; this.detectT = new Map(); this.losLost = new Map();
     this.invest = null; this.lastSound = null; this.lastInvestigated = null;
     this.pendingSounds = [];
     this.nextSniffT = match.phaseCfg.smell ? match.t + match.rng.float(...AI.sniffInterval) : Infinity;
@@ -33,12 +33,23 @@ export class Creature {
     this.lightSeen = null;
     this.killed = null;
     this.prevSpeed = 0;
+    // --- comportamento dirigido (diretor) ---
+    this.sweep = null; this.passBy = null; this.lookNext = null; this.inspectNext = null;
+    this.tension = false; this.stillT = 0; this.maxStill = 0;
+    this.roomHist = []; this.lastRoom = -1; this.lastDoorPauseT = -1e9;
+    this.vx = 0; this.vz = 0; this.yawRate = 0;
   }
+  get dir() { return this.m.director; }
+  get menace() { return this.m.director ? this.m.director.menace : 0; }
+  // multiplicador leve de velocidade conforme a ameaça (nunca na perseguição: fuga continua possível)
+  get mm() { return 1 + 0.15 * this.menace; }
   get rng() { return this.m.rng; }
   setState(s, dur = 0) {
-    if (this.state !== s) { this.state = s; this.stateT = 0; this.animT = 0; }
+    if (this.state !== s) { this.state = s; this.stateT = 0; this.animT = 0; if (s !== 'look') this.tension = false; }
     this.durState = dur;
   }
+  // interrompe planos de patrulha (sentido percebeu algo)
+  dropPlans() { this.sweep = null; this.passBy = null; this.lookNext = null; this.inspectNext = null; this.tension = false; }
   // -------- sentidos --------
   senseVision() {
     const m = this.m, t = m.t;
@@ -49,6 +60,12 @@ export class Creature {
       let detected = v.visible && v.moving;
       if (v.beamOnCreature && v.inFov && v.los && v.moving && v.dist <= AI.flashlight.beamRange) detected = true;
       if (detected) { this.detectT.set(p.id, t); fresh.push({ p, v }); }
+      // quebrou a linha de visão por ~1 s: a memória da detecção some — um jogador PARADO
+      // não é "readquirido" ao reaparecer; só volta a ser visto se se mexer
+      if (!v.los) {
+        if (!this.losLost.has(p.id)) this.losLost.set(p.id, t);
+        else if (t - this.losLost.get(p.id) >= 1.0) this.detectT.delete(p.id);
+      } else this.losLost.delete(p.id);
       const prior = this.detectT.has(p.id) && (t - this.detectT.get(p.id)) < AI.detectionMemory;
       if ((v.visible || (focused && v.los && v.dist < 3.5)) && prior) tracked.push({ p, v });
       else if (v.beamOnCreature && v.inFov && v.los && !v.moving) light = { p, v };
@@ -108,6 +125,7 @@ export class Creature {
     const quick = ['investigate', 'hear', 'track', 'search', 'chase'].includes(this.state);
     const p = this.approxPoint(ev.x, ev.z, ev.level, r.dist);
     this.invest = { ...p, t: this.m.t, loudness: r.loudness, type: ev.type, srcX: ev.x, srcZ: ev.z };
+    this.dropPlans();
     this.lookAt = Math.atan2(ev.x - this.x, ev.z - this.z);
     this.path = null;
     this.target = null;
@@ -115,6 +133,8 @@ export class Creature {
     this.m.creatureSound(quick ? 'turn' : 'hear');
   }
   enterAlert(p, instant) {
+    this.dropPlans();
+    if (this.dir) this.dir.onSighting();
     this.target = p.id;
     this.lastKnown = { x: p.x, z: p.z, level: p.level, t: this.m.t };
     this.lastSeenT = this.m.t;
@@ -168,6 +188,7 @@ export class Creature {
     }
     let desired = 0, turn = CREATURE.turnRate.slow, accel = 2.5;
     let headTarget = 0, pitchTarget = 0;
+    this.doorwayPause();
     const S = this.state;
     switch (S) {
       case 'hold':
@@ -177,15 +198,38 @@ export class Creature {
         headTarget = Math.sin(t * 0.5) * 0.5;
         break;
       case 'patrol': case 'wander': case 'return': {
-        desired = S === 'return' ? CREATURE.speed.search : CREATURE.speed.patrol;
-        if (this.arrived()) { this.setState('look', this.rng.float(2, 4)); }
+        desired = (S === 'return' ? CREATURE.speed.search : CREATURE.speed.patrol) * this.mm;
+        if (this.passBy) desired = CREATURE.speed.patrol * 0.92; // passa devagar pela região dos jogadores
+        if (this.arrived()) this.arrivePatrol();
         headTarget = Math.sin(t * 0.7) * 0.35;
         break;
       }
       case 'look':
         headTarget = Math.sin(this.stateT * 1.3) * 1.1;
-        if (this.stateT >= this.durState && this.afterLook !== 'search') { if (this.rng.chance(0.45)) this.pickWander(); else this.pickPatrol(); }
+        if (this.stateT >= this.durState && this.afterLook !== 'search') {
+          if (this.lookNext) { const f = this.lookNext; this.lookNext = null; f(); }
+          else this.pickPatrol();
+        }
         break;
+      case 'sweep': {
+        const sw = this.sweep;
+        if (!sw) { this.pickPatrol(); break; }
+        desired = CREATURE.speed.patrol * 0.95 * this.mm;
+        headTarget = Math.sin(t * 1.2) * 0.6;
+        if (sw.pause > 0) {
+          sw.pause -= dt; desired = 0;
+          headTarget = Math.sin(this.stateT * 1.6) * 1.15;
+          if (sw.pause <= 0) this.sweepNext();
+        } else if (this.arrived()) {
+          const prop = this.nearestProp();
+          if (prop && !sw.inspected && this.rng.chance(0.4)) {
+            sw.inspected = true; this.inspectProp = prop; this.inspectNext = 'sweep';
+            this.setState('inspect', this.rng.float(1.4, 2.4));
+            this.lastInvestigated = { x: +this.x.toFixed(1), z: +this.z.toFixed(1), level: this.level, t, room: this.roomName(), reason: 'vasculhando móveis' };
+          } else sw.pause = this.rng.float(0.5, 1.3);
+        }
+        break;
+      }
       case 'alert': {
         accel = 12; turn = CREATURE.turnRate.fast;
         if (this.lastKnown) this.lookAt = Math.atan2(this.lastKnown.x - this.x, this.lastKnown.z - this.z);
@@ -194,7 +238,7 @@ export class Creature {
         if (this.stateT >= this.durState) {
           const tracked = this.vis && this.vis.tracked.includes(this.target);
           if (tracked) { this.setState('chase'); this.chaseStart = t; this.m.creatureSound('roar'); this.path = null; }
-          else this.enterSearch();
+          else { if (this.dir) this.dir.onEncounterEnd('encontro próximo'); this.enterSearch(); }
         }
         break;
       }
@@ -203,7 +247,9 @@ export class Creature {
         const tp = m.players.get(this.target);
         const lk = this.lastKnown;
         const lost = t - this.lastSeenT;
-        if (!tp || !tp.alive || tp.escaped) { this.target = null; this.enterSearch(); break; }
+        // perdeu a linha de visão: corre menos (incerteza) — quebrar a visão e ficar parado compensa
+        if (lost > 0.6) desired *= 0.8;
+        if (!tp || !tp.alive || tp.escaped) { this.target = null; if (this.dir) this.dir.onEncounterEnd('perseguição'); this.enterSearch(); break; }
         if (lk && (!this.goal || Math.hypot(this.goal.x - lk.x, this.goal.z - lk.z) > 0.8 || this.repathT <= 0)) { this.goTo(lk.x, lk.z, lk.level); this.repathT = 0.35; }
         this.repathT -= dt;
         if (lk) headTarget = clampA(angleDiff(Math.atan2(lk.x - this.x, lk.z - this.z), this.yaw), 0.9);
@@ -211,7 +257,7 @@ export class Creature {
           const d = Math.hypot(tp.x - this.x, tp.z - this.z);
           if (d < CREATURE.attackRange && m.world.noWallBetween(this.level, this.x, this.z, tp.x, tp.z)) { this.setState('attack', 0.75); this.struck = false; this.m.creatureSound('attack'); break; }
         }
-        if (lost > 0.4 && (this.arrived() || lost > 8)) this.enterSearch();
+        if (lost > 0.4 && (this.arrived() || lost > 8)) { if (this.dir) this.dir.onEncounterEnd('perseguição'); this.enterSearch(); }
         break;
       }
       case 'attack': {
@@ -222,11 +268,11 @@ export class Creature {
         if (!this.struck && this.stateT >= 0.35) {
           this.struck = true;
           const victims = m.attackStrike(this);
-          if (victims.length) { this.setState('kill', 1.9); this.killed = victims[0]; break; }
+          if (victims.length) { this.setState('kill', 1.9); this.killed = victims[0]; if (this.dir) this.dir.onEncounterEnd('morte'); break; }
         }
         if (this.stateT >= this.durState) {
           const tracked = this.vis && this.vis.tracked.includes(this.target);
-          if (tracked) this.setState('chase'); else this.enterSearch();
+          if (tracked) this.setState('chase'); else { if (this.dir) this.dir.onEncounterEnd('perseguição'); this.enterSearch(); }
         }
         break;
       }
@@ -242,7 +288,7 @@ export class Creature {
         break;
       }
       case 'investigate': {
-        desired = CREATURE.speed.investigate;
+        desired = CREATURE.speed.investigate * this.mm;
         headTarget = Math.sin(t * 1.1) * 0.4;
         if (this.arrived()) {
           this.lastInvestigated = { x: +this.invest.x.toFixed(1), z: +this.invest.z.toFixed(1), level: this.invest.level, t, room: this.roomName(), reason: this.invest.type };
@@ -255,6 +301,8 @@ export class Creature {
         headTarget = Math.sin(this.stateT * 1.6) * 1.2; pitchTarget = this.inspectProp ? -0.35 : -0.1;
         if (this.inspectProp && this.stateT < 1.5) this.faceToward(Math.atan2(this.inspectProp.x - this.x, this.inspectProp.z - this.z), 2, dt);
         if (this.stateT >= this.durState) {
+          if (this.inspectNext === 'sweep' && this.sweep) { this.inspectNext = null; this.inspectProp = null; this.setState('sweep'); this.sweepNext(); break; }
+          this.inspectNext = null;
           if (this.track && t - this.track.lastSignalT < AI.scentGiveUp) { this.enterSniff(true); break; }
           if (this.track) { this.track = null; this.sniffInfo.state = 'rastro abandonado'; }
           this.invest = null;
@@ -263,12 +311,12 @@ export class Creature {
         break;
       }
       case 'search': {
-        desired = this.searchPhase === 0 ? 2.6 : CREATURE.speed.search;
+        desired = this.searchPhase === 0 ? 2.6 : CREATURE.speed.search * this.mm;
         headTarget = Math.sin(t * 1.4) * 0.8;
         if (this.arrived()) {
           if (this.searchPhase === 0) this.lastInvestigated = { x: +this.goal.x.toFixed(1), z: +this.goal.z.toFixed(1), level: this.goal.level, t, room: this.roomName(), reason: 'última posição conhecida' };
           this.searchPhase++;
-          if (this.searchPhase <= 2 && this.stateT < 14) { this.setState('look', this.rng.float(...AI.searchTime) * 0.6); this.afterLook = 'search'; }
+          if (this.searchPhase <= 3 && this.stateT < 22) { this.setState('look', this.rng.float(...AI.searchTime) * 0.6); this.afterLook = 'search'; }
           else { this.setState('return'); this.pickPatrol('return'); }
         }
         break;
@@ -297,7 +345,7 @@ export class Creature {
         break;
       }
       case 'track': {
-        desired = CREATURE.speed.scent;
+        desired = CREATURE.speed.scent * this.mm;
         pitchTarget = -0.3; headTarget = Math.sin(t * 2) * 0.3;
         if (this.arrived()) { this.lastInvestigated = { x: +this.track.x.toFixed(1), z: +this.track.z.toFixed(1), level: this.track.L, t, room: this.roomName(), reason: 'rastro de cheiro' }; this.enterSniff(true); }
         if (this.track && t - this.track.lastSignalT > AI.scentGiveUp + 10) { this.track = null; this.setState('return'); this.pickPatrol('return'); }
@@ -317,13 +365,18 @@ export class Creature {
     }
     if (this.state === 'look' && this.afterLook === 'search' && this.stateT >= this.durState) {
       this.afterLook = null; this.state = 'search'; this.stateT = 0;
-      const p = this.randomNearby(5);
-      if (p) this.goTo(p.x, p.z, this.level); else { this.setState('return'); this.pickPatrol('return'); }
+      // busca em expansão: 4 m → 7 m → 10 m ao redor da última posição conhecida
+      const lk = this.lastKnown || { x: this.x, z: this.z, level: this.level };
+      const p = this.randomAround(lk.x, lk.z, lk.level, 1 + 3 * this.searchPhase);
+      if (!p || !this.goTo(p.x, p.z, p.level)) { this.setState('return'); this.pickPatrol('return'); }
     }
     // cabeça
     this.headYaw += (headTarget - this.headYaw) * Math.min(1, dt * 5);
     this.headPitch += (pitchTarget - this.headPitch) * Math.min(1, dt * 4);
+    const px = this.x, pz = this.z, pyaw = this.yaw;
     this.moveAlongPath(dt, desired, turn, accel);
+    if (dt > 0) { this.vx = (this.x - px) / dt; this.vz = (this.z - pz) / dt; this.yawRate = angleDiff(this.yaw, pyaw) / dt; }
+    this.watchdog(dt);
     this.animFromState();
     this.trace.push({ t, x: this.x, z: this.z, level: this.level });
     if (this.trace.length > 400) this.trace.shift();
@@ -334,6 +387,7 @@ export class Creature {
     if (S === 'chase') a = this.speed > 1 ? 'run' : 'idle';
     else if (S === 'investigate' || S === 'track' || S === 'search') a = this.speed > 0.2 ? 'investigate_walk' : 'look';
     else if (S === 'patrol' || S === 'wander' || S === 'return') a = this.speed > 0.2 ? 'walk' : 'idle';
+    else if (S === 'sweep') a = this.speed > 0.2 ? 'walk' : 'look';
     else if (S === 'alert') a = this.stateT < 0.35 ? 'stop' : 'turn';
     else if (S === 'hear') a = 'hear';
     else if (S === 'sniff') a = 'sniff';
@@ -366,25 +420,198 @@ export class Creature {
     if (!this.path) return true;
     return this.pathIdx >= this.path.length;
   }
-  pickPatrol(stateName = 'patrol') {
+  // ---------- patrulha dirigida ----------
+  // Salas candidatas a destino (as rampas de escada não são destino; a navegação as usa sozinha).
+  patrolRooms() {
+    if (!this._rooms) this._rooms = this.m.map.rooms.filter(r => r.type !== 'stairs');
+    return this._rooms;
+  }
+  // ponto navegável dentro de uma sala; com "near", escolhe a amostra mais próxima desse ponto
+  roomPoint(room, near = null, samples = 14) {
     const m = this.m;
-    const rooms = m.map.rooms.filter(r => r.type !== 'stairs' || !r.top);
-    let best = null, bestScore = -1;
-    for (let k = 0; k < 8; k++) {
-      const r = this.rng.pick(rooms);
-      const last = this.visited.get(r.id) ?? -1e9;
-      const score = Math.min(200, m.t - last) + this.rng.float(0, 40) - (r.level !== this.level ? 25 : 0);
-      if (score > bestScore) { bestScore = score; best = r; }
+    let best = null, bd = Infinity;
+    for (let k = 0; k < samples * 2 && (!best || k < samples); k++) {
+      const cx = this.rng.int(room.x0, room.x1), cz = this.rng.int(room.z0, room.z1);
+      if (!m.nav.walkable(room.level, cx, cz)) continue;
+      if (m.map.levels[room.level].room[cz * W + cx] !== room.id) continue;
+      const x = (cx + 0.5) * CELL, z = (cz + 0.5) * CELL;
+      const d = near ? Math.hypot(x - near.x, z - near.z) : this.rng.next();
+      if (d < bd) { bd = d; best = { x, z, level: room.level }; }
+      if (!near) break;
     }
-    for (let k = 0; k < 12; k++) {
-      const cx = this.rng.int(best.x0, best.x1), cz = this.rng.int(best.z0, best.z1);
-      if (m.nav.walkable(best.level, cx, cz)) {
-        this.visited.set(best.id, m.t);
-        this.setState(stateName);
-        if (this.goTo((cx + 0.5) * CELL, (cz + 0.5) * CELL, best.level)) return;
+    return best;
+  }
+  // Escolha de destino ponderada pelo diretor:
+  //  ameaça baixa → salas longe da região (aproximada) dos jogadores;
+  //  ameaça alta → salas/corredores cada vez mais perto dessa região (que tem erro proposital).
+  pickPatrol(stateName = 'patrol') {
+    const m = this.m, t = m.t, dir = this.dir;
+    this.sweep = null; this.lookNext = null; this.inspectNext = null; this.tension = false;
+    if (stateName !== 'return') this.passBy = null;
+    if (dir && dir.wantsPassBy() && this.planPassBy(stateName)) return;
+    this.passBy = null;
+    const hint = dir ? dir.regionHint() : null;
+    const menace = this.menace;
+    const rooms = this.patrolRooms();
+    const here = m.world.roomAt(this.level, this.x, this.z);
+    const scored = [];
+    // retorno ocasional à sala anterior ("volta atrás")
+    const prev = this.roomHist.length >= 2 ? this.roomHist[this.roomHist.length - 2] : -1;
+    for (const r of rooms) {
+      if (r.id === here && this.rng.chance(0.85)) continue;
+      const last = this.visited.get(r.id) ?? -1e9;
+      const age = t - last;
+      let score = this.rng.float(0, 1.3);
+      score -= age < 120 ? (1 - age / 120) * 3.2 : 0;           // evita repetir salas recentes
+      if (hint) {
+        const d = dir.roomDist(r, hint);
+        const pref = 26 * (1 - menace);                             // distância preferida até a região
+        score -= Math.abs(d - pref) / (5 + 4 * (1 - menace));
+        if (r.type === 'corridor') score += 0.25 + 0.7 * menace;   // corredores ligam as regiões
+      }
+      // recipientes ainda fechados (áreas que os jogadores ainda vão revistar)
+      let closed = 0; for (const c of m.map.containers) if (c.room === r.id && !m.containerOpen[c.id]) closed++;
+      score += Math.min(1, closed * 0.25);
+      // custo de viagem (aproximado)
+      score -= (Math.hypot((r.x0 + r.x1) * CELL / 2 - this.x, (r.z0 + r.z1) * CELL / 2 - this.z) + Math.abs(r.level - this.level) * 8) / 70;
+      if (r.id === prev && age > 25 && this.rng.chance(0.25)) score += 2.5; // volta atrás
+      scored.push({ r, score });
+    }
+    scored.sort((a, b) => b.score - a.score);
+    for (const { r } of scored.slice(0, 4)) {
+      const pt = this.roomPoint(r, hint && menace > 0.35 && hint.level === r.level ? hint : null);
+      if (!pt) continue;
+      this.setState(stateName);
+      if (this.goTo(pt.x, pt.z, pt.level)) {
+        this.visited.set(r.id, t);
+        if (dir) dir.target = { kind: stateName === 'return' ? 'retorno' : 'patrulha', room: r.name, roomId: r.id, level: r.level, x: +pt.x.toFixed(1), z: +pt.z.toFixed(1), err: hint ? hint.err : null };
+        return;
       }
     }
     this.pickWander();
+  }
+  // "Passagem": rota que atravessa a sala/corredor aproximado dos jogadores e segue adiante.
+  // Se eles ficarem parados (fase 1), ela passa sem perceber ninguém.
+  planPassBy(stateName = 'patrol') {
+    const m = this.m, dir = this.dir;
+    const hint = dir.regionHint();
+    if (!hint) return false;
+    const rooms = this.patrolRooms().filter(r => r.level === hint.level);
+    if (!rooms.length) return false;
+    let A = null, bd = Infinity;
+    for (const r of rooms) { const d = dir.roomDist(r, hint) + (r.type === 'corridor' ? 1.5 : 0); if (d < bd) { bd = d; A = r; } }
+    const via = A && this.roomPoint(A, hint, 18);
+    if (!via) return false;
+    // sala "adiante", no mesmo andar, nem muito perto nem muito longe
+    const beyond = rooms.filter(r => r.id !== A.id).map(r => ({ r, d: Math.hypot((r.x0 + r.x1) * CELL / 2 - via.x, (r.z0 + r.z1) * CELL / 2 - via.z) }))
+      .filter(o => o.d > 6 && o.d < 24);
+    const B = beyond.length ? this.rng.pick(beyond).r : this.rng.pick(rooms);
+    const then = this.roomPoint(B) || via;
+    this.setState(stateName === 'return' ? 'return' : 'patrol');
+    if (!this.goTo(via.x, via.z, via.level)) return false;
+    this.passBy = { stage: 0, via: { ...via, room: A.name }, then: { ...then, room: B.name } };
+    this.visited.set(A.id, m.t);
+    dir.target = { kind: 'passagem', room: A.name, roomId: A.id, level: A.level, x: +via.x.toFixed(1), z: +via.z.toFixed(1), err: hint.err };
+    dir.passByDone();
+    return true;
+  }
+  arrivePatrol() {
+    const m = this.m;
+    const rid = m.world.roomAt(this.level, this.x, this.z);
+    if (rid >= 0 && this.roomHist[this.roomHist.length - 1] !== rid) { this.roomHist.push(rid); if (this.roomHist.length > 12) this.roomHist.shift(); }
+    if (this.passBy && this.passBy.stage === 0) {
+      // no meio da região dos jogadores: às vezes para um instante (tensão) e segue adiante
+      this.passBy.stage = 1;
+      const th = this.passBy.then, st = this.state;
+      const go = () => { this.setState(st === 'look' ? 'patrol' : st); if (!this.goTo(th.x, th.z, th.level)) this.pickPatrol(); };
+      if (this.rng.chance(0.55)) { this.setState('look', this.rng.float(1.8, 3.6)); this.tension = true; this.lookNext = go; }
+      else go();
+      return;
+    }
+    this.passBy = null;
+    const room = rid >= 0 ? m.map.rooms[rid] : null;
+    if (room && room.type !== 'corridor' && room.type !== 'stairs') this.startSweep(room);
+    else { this.setState('look', this.rng.float(0.8, 1.8)); this.lookNext = () => this.pickPatrol(); }
+  }
+  // Varredura curta do cômodo: 1–3 pontos, pausas para olhar, às vezes inspeciona um móvel.
+  startSweep(room) {
+    const pts = [];
+    const n = this.rng.int(1, 3);
+    for (let k = 0; k < n * 3 && pts.length < n; k++) {
+      const p = this.roomPoint(room);
+      if (p && Math.hypot(p.x - this.x, p.z - this.z) > 1.2) pts.push(p);
+    }
+    this.sweep = { room: room.id, pts, i: -1, pause: this.rng.float(0.4, 1.0), inspected: false };
+    this.setState('sweep');
+    this.path = null;
+  }
+  sweepNext() {
+    const sw = this.sweep;
+    if (!sw) { this.pickPatrol(); return; }
+    sw.pause = 0;
+    sw.i++;
+    while (sw.i < sw.pts.length) {
+      const p = sw.pts[sw.i];
+      if (this.goTo(p.x, p.z, p.level)) return;
+      sw.i++;
+    }
+    this.sweep = null;
+    this.pickPatrol();
+  }
+  // Pausa breve logo ao passar de um cômodo para outro (porta/arco): olha ao redor e segue.
+  doorwayPause() {
+    const m = this.m;
+    const rid = m.world.roomAt(this.level, this.x, this.z);
+    if (rid < 0) return;
+    const prev = this.lastRoom;
+    this.lastRoom = rid;
+    if (prev < 0 || prev === rid) return;
+    if (!['patrol', 'return', 'sweep'].includes(this.state) || this.speed < 0.3) return;
+    const room = m.map.rooms[rid];
+    if (room.type === 'stairs') return;
+    const t = m.t, menace = this.menace;
+    if (t - this.lastDoorPauseT < 8 || !this.rng.chance(0.22 + 0.33 * menace)) return;
+    this.lastDoorPauseT = t;
+    const hint = this.dir && this.dir.hint;
+    const near = hint && hint.level === this.level && Math.hypot(hint.x - this.x, hint.z - this.z) < hint.err + 3;
+    const tense = near && menace > 0.55;
+    const st = this.state, g = this.goal;
+    this.setState('look', tense ? this.rng.float(2.5, 4.5) : this.rng.float(0.7, 1.5));
+    this.tension = tense;
+    this.lookNext = () => { this.setState(st); if (!g || !this.goTo(g.x, g.z, g.level)) { if (st === 'sweep') this.sweepNext(); else this.pickPatrol(); } };
+  }
+  // Nunca fica parada à toa: mais de ~4 s sem andar (6 s em pausa de tensão) → segue em frente.
+  watchdog(dt) {
+    const S = this.state;
+    const exempt = S === 'hold' || S === 'freeze' || S === 'alert' || S === 'attack' || S === 'kill' || S === 'chase' || (S === 'idle' && this.m.t < AI.graceTime);
+    if (exempt || this.speed > 0.15) { this.stillT = 0; return; }
+    this.stillT += dt;
+    if (this.stillT > this.maxStill) this.maxStill = this.stillT;
+    const limit = this.tension ? 6 : 4;
+    if (this.stillT < limit) return;
+    this.stillT = limit - 0.6; // a próxima pausa encadeada também é curta
+    this.unstickCount = (this.unstickCount || 0) + 1;
+    if (S === 'inspect' && this.track) { const p = this.randomNearby(4); this.setState('track'); if (!p || !this.goTo(p.x, p.z, this.level)) this.pickPatrol(); return; }
+    if (['look', 'recover', 'inspect', 'hear', 'sniff', 'door', 'idle'].includes(S) || (S === 'sweep' && this.sweep && this.sweep.pause > 0)) {
+      if (S === 'sweep') { this.sweepNext(); return; }
+      if (S === 'idle') { this.pickPatrol(); return; }
+      this.stateT = Math.max(this.stateT, this.durState, 1); // encerra a pausa agora (a transição normal acontece)
+      return;
+    }
+    // estado de deslocamento, mas sem sair do lugar (caminho falhou): escolhe outro destino
+    this.path = null;
+    if (S === 'search' || S === 'investigate' || S === 'track') { this.setState('return'); this.pickPatrol('return'); }
+    else this.pickPatrol();
+  }
+  // ponto navegável alcançável em torno de (x, z) — usado na busca em expansão
+  randomAround(x, z, level, r) {
+    const m = this.m;
+    for (let k = 0; k < 20; k++) {
+      const a = this.rng.float(0, Math.PI * 2), d = this.rng.float(r * 0.4, r);
+      const cx = Math.floor((x + Math.cos(a) * d) / CELL), cz = Math.floor((z + Math.sin(a) * d) / CELL);
+      if (m.nav.walkable(level, cx, cz)) return { x: (cx + 0.5) * CELL, z: (cz + 0.5) * CELL, level };
+    }
+    return null;
   }
   randomNearby(r) {
     const m = this.m;
@@ -482,6 +709,8 @@ export class Creature {
       x: +this.x.toFixed(3), y: +this.y.toFixed(3), z: +this.z.toFixed(3), level: this.level,
       yaw: +this.yaw.toFixed(3), headYaw: +this.headYaw.toFixed(3), headPitch: +this.headPitch.toFixed(3),
       state: this.state, anim: this.anim, animT: +this.animT.toFixed(2), speed: +this.speed.toFixed(2),
+      // campos novos (opcionais) para animação: velocidade no plano e taxa de giro (rad/s)
+      vx: +this.vx.toFixed(2), vz: +this.vz.toFixed(2), turn: +this.yawRate.toFixed(2),
     };
   }
 }
