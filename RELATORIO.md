@@ -97,19 +97,19 @@ Capturas de tela da execução ficam em `shots/` (por exemplo `death.png`, `spec
 
 ## 4. Link para abrir a versão jogável
 
-**LINK_PUBLICO**
+**https://nao-se-mexa.onrender.com**
 
 (Observação: no plano gratuito do Render o serviço "dorme" sem uso; a primeira abertura pode demorar alguns segundos.)
 
 ## 5. Como acessar a aba TESTAR JOGO
 
-- Abra **LINK_PUBLICO/testar** (ou clique em **TESTAR JOGO** no menu principal).
+- Abra **https://nao-se-mexa.onrender.com/testar** (ou clique em **TESTAR JOGO** no menu principal).
 - Ali dá para: gerar e validar uma mansão com qualquer semente e ver o mapa dos andares; começar uma partida com uma semente específica; criar uma sala de teste multiplayer; ligar/desligar o painel de diagnóstico durante a partida (estado da criatura, sentidos ativos, último som, farejamento, chaves, saída, conexão e semente) e regenerar a mansão.
 
 ## 6. Como criar uma sala multiplayer e convidar outra pessoa
 
-1. Abra **LINK_PUBLICO**, digite seu nome e clique em **Criar sala**.
-2. Na sala de espera aparece um **código de 5 caracteres**. Clique em **Copiar código** ou **Compartilhar convite** — o convite é um link do tipo `LINK_PUBLICO/?sala=CODIGO`.
+1. Abra **https://nao-se-mexa.onrender.com**, digite seu nome e clique em **Criar sala**.
+2. Na sala de espera aparece um **código de 5 caracteres**. Clique em **Copiar código** ou **Compartilhar convite** — o convite é um link do tipo `https://nao-se-mexa.onrender.com/?sala=CODIGO`.
 3. Mande o link (ou o código) para a outra pessoa. Ela abre o link em outro navegador/computador, digita o nome e clica em **Entrar** (o código já vem preenchido pelo link).
 4. Cada convidado clica em **Pronto**. Quando todos estiverem prontos, o anfitrião escolhe a fase e clica em **Iniciar**.
 5. Até 4 jogadores por sala. Se alguém cair, tem 30 s para voltar (inclusive recarregando a página); se o anfitrião sair, outro jogador vira anfitrião.
@@ -128,5 +128,5 @@ Capturas de tela da execução ficam em `shots/` (por exemplo `death.png`, `spec
 ## 8. Funcionalidades que ainda não puderam ser implementadas
 
 - Nenhum item dos critérios da seção 23 ficou de fora: todos foram implementados e cobertos pelos testes automáticos e/ou pelo teste em navegador descritos acima.
-- Não verificado ainda: uma partida com **pessoas reais em navegadores e redes diferentes no link público** (o multiplayer foi testado com clientes reais no mesmo servidor, inclusive dois navegadores). Essa verificação deve ser feita assim que o LINK_PUBLICO estiver no ar.
+- Não verificado ainda: uma partida com **pessoas reais em navegadores e redes diferentes no link público** (o multiplayer foi testado com clientes reais no mesmo servidor, inclusive dois navegadores). Essa verificação deve ser feita assim que o https://nao-se-mexa.onrender.com estiver no ar.
 - Fora do escopo desta versão: chat de voz/texto, versão para celular, servidores em várias regiões e salvamento de salas após reinício do servidor.
