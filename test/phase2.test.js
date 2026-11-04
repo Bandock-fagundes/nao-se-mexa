@@ -5,6 +5,7 @@ import { makeMatch, clearCorridor, wallSpot, run, stepPlayer, strafe, navAtDista
 import { LEVELS } from '../shared/config.js';
 import { hearingCheck, makeSoundEvent } from '../server/senses.js';
 import { SOUND_TYPES } from '../shared/config.js';
+import { soundReaches, roomGraph } from '../shared/sound.js';
 
 const SEED = 'fase-dois-3';
 
@@ -24,64 +25,102 @@ test('F2: comportamentos da fase 1 continuam (visão por movimento, sem ver atra
   assert.equal(m2.world.lineOfSight(1, w.x, w.zCorr, w.x, w.zRoom - 1), false);
 });
 
-test('F2: detecta sons dentro do alcance configurado e investiga a origem aproximada', () => {
+test('F2: passos de corrida são ouvidos e a criatura investiga a origem aproximada', () => {
   const m = makeMatch(2, SEED);
   const c = clearCorridor(m, 1, 30);
   m.debugPlaceCreature(c.x0 + 14, c.z, 1, Math.PI / 2); // olhando +x
   m.debugPlacePlayer('p1', c.x0 + 9, c.z, 1); // 5 m atrás dela: fora do campo de visão
-  run(m, 0.5, (t, dt) => stepPlayer(m, 'p1', -1.8, 0, dt)); // um passo normal
+  run(m, 0.5, (t, dt) => stepPlayer(m, 'p1', -4.6, 0, dt, { run: true })); // corre (pá pá pá)
   const basement = m.map.rooms.find(r => r.level === 0 && r.type === 'corridor');
   m.debugPlacePlayer('p1', (basement.x0 + 3) * 0.5, (basement.z0 + 2) * 0.5, 0); // some sem fazer barulho
   run(m, 0.3);
   const cr = m.creature;
   assert.ok(cr.lastSound, 'ouviu algo');
-  assert.equal(cr.lastSound.type, 'step_walk');
+  assert.equal(cr.lastSound.type, 'step_run');
   assert.ok(['hear', 'investigate', 'inspect'].includes(cr.state), 'reagiu: ' + cr.state);
   assert.ok(cr.target === null, 'som não dá alvo exato');
   const inv = cr.invest;
   const err = Math.hypot(inv.x - inv.srcX, inv.z - inv.srcZ);
-  assert.ok(err <= Math.min(3, 0.12 * 8 + 0.4) + 0.8, 'origem aproximada (erro ' + err.toFixed(2) + ')');
-  // vai até a região
+  assert.ok(err <= 3.8, 'origem aproximada (erro ' + err.toFixed(2) + ')');
   const target = { x: inv.x, z: inv.z };
   let minD = 1e9;
   run(m, 8, () => { minD = Math.min(minD, Math.hypot(cr.x - target.x, cr.z - target.z)); });
   assert.ok(minD < 1.0, 'caminhou até a região do som (' + minD.toFixed(2) + ')');
 });
 
-test('F2: sons mais intensos têm alcance maior; agachar reduz e correr aumenta o ruído', () => {
+test('F2: andar normal não é ouvido nem lado a lado; agachado é silêncio total; a madeira range às vezes', () => {
   const m = makeMatch(2, SEED);
   const c = clearCorridor(m, 1, 30);
   m.debugPlaceCreature(c.x0, c.z, 1, Math.PI / 2);
   const at = (d, type) => hearingCheck(m, m.creature, makeSoundEvent(m, type, c.x0 + d, 0, c.z, 1));
-  assert.ok(SOUND_TYPES.step_run.range > SOUND_TYPES.step_walk.range && SOUND_TYPES.step_walk.range > SOUND_TYPES.step_crouch.range);
-  assert.equal(at(12, 'step_walk').heard, false, 'passo normal a 12 m não é ouvido');
-  assert.equal(at(12, 'step_run').heard, true, 'corrida a 12 m é ouvida');
-  assert.equal(at(5, 'step_crouch').heard, false, 'agachado a 5 m não é ouvido');
-  assert.equal(at(5, 'step_walk').heard, true, 'andando a 5 m é ouvido');
-  assert.ok(at(20, 'knock_bucket').heard, 'balde de metal a 20 m é ouvido');
-  // o servidor classifica os passos pela velocidade real do corpo
+  assert.equal(at(1, 'step_walk').heard, false, 'andar normal ao lado: não ouve');
+  assert.equal(at(1, 'step_crouch').heard, false, 'agachado ao lado: não ouve');
+  assert.equal(at(6, 'creak').heard, true, 'rangido no mesmo cômodo: ouve');
+  assert.equal(at(12, 'step_run').heard, true, 'corrida no mesmo cômodo: ouve');
+  // estatística real dos passos: andar faz rangidos (só às vezes), correr nunca range, agachar não faz nada
   const m2 = makeMatch(2, SEED);
   const c2 = clearCorridor(m2, 1, 30);
-  m2.debugPlacePlayer('p1', c2.x0, c2.z, 1);
-  run(m2, 1.5, (t, dt) => stepPlayer(m2, 'p1', 1.2, 0, dt, { crouch: true }));
-  assert.ok(m2.sounds.every(s => s.type === 'step_crouch'), 'agachado → step_crouch');
-  m2.sounds.length = 0;
-  run(m2, 1.5, (t, dt) => stepPlayer(m2, 'p1', 4.8, 0, dt, { run: true }));
-  assert.ok(m2.sounds.some(s => s.type === 'step_run'), 'correndo → step_run');
-  // trapaça: declarar agachado correndo não reduz o ruído
-  m2.sounds.length = 0;
-  run(m2, 1.0, (t, dt) => stepPlayer(m2, 'p1', -4.8, 0, dt, { crouch: true }));
-  assert.ok(m2.sounds.some(s => s.type === 'step_run'));
+  const cnt = (mode, v) => {
+    m2.sounds.length = 0; const seen = {};
+    m2.debugPlacePlayer('p1', c2.x0, c2.z, 1);
+    let dir = 1;
+    run(m2, 12, (t, dt) => { const p = m2.players.get('p1'); if (p.x > c2.x1 - 1) dir = -1; if (p.x < c2.x0 + 1) dir = 1; stepPlayer(m2, 'p1', dir * v, 0, dt, mode); for (const s of m2.sounds.splice(0)) seen[s.type] = (seen[s.type] || 0) + 1; });
+    return seen;
+  };
+  const walk = cnt({}, 2.4), runS = cnt({ run: true }, 4.8), crouch = cnt({ crouch: true }, 1.25);
+  if (m2.world.surfaceAt(1, c2.x0, c2.z) === 'wood') assert.ok((walk.creak || 0) >= 1 && walk.creak < walk.step_walk, 'andando: rangidos ocasionais ' + JSON.stringify(walk));
+  assert.ok(!runS.creak && runS.step_run > 10, 'correndo: sem rangido, passos ouvíveis ' + JSON.stringify(runS));
+  assert.equal(Object.keys(crouch).filter(k => k !== 'step_crouch').length, 0, 'agachado: nada audível ' + JSON.stringify(crouch));
 });
 
-test('F2: paredes e portas fechadas atenuam o som', () => {
+test('F2: níveis de som — vermelho (casa toda), amarelo (andar + abaixo), baixo (cômodo e vizinhos)', () => {
   const m = makeMatch(2, SEED);
-  const w = wallSpot(m, 1);
-  m.debugPlaceCreature(w.x, w.zCorr + 1.0, 1, 0);
-  const open = hearingCheck(m, m.creature, makeSoundEvent(m, 'step_walk', w.x + 6, 0, w.zCorr + 1.0, 1));
-  const wall = hearingCheck(m, m.creature, makeSoundEvent(m, 'step_walk', w.x, 0, w.zRoom - 4.5, 1));
-  assert.equal(open.walls, 0); assert.ok(wall.walls >= 1);
-  assert.ok(wall.effRange < open.effRange * 0.5);
+  const map = m.map;
+  const room = (L, type) => map.rooms.find(r => r.level === L && (!type || r.type === type) && r.type !== 'stairs');
+  const mid = (r) => ({ x: (r.x0 + r.x1 + 1) / 2 * 0.5, z: (r.z0 + r.z1 + 1) / 2 * 0.5 });
+  const lis = (r) => ({ level: r.level, ...mid(r) });
+  const ev = (type, r) => ({ type, lvl: SOUND_TYPES[type].lvl, level: r.level, ...mid(r) });
+  const g = roomGraph(map);
+  const attic = room(3), basement = room(0, 'corridor'), corr1 = room(1, 'corridor'), corr2 = room(2, 'corridor');
+  // vermelho: do sótão ao porão
+  assert.equal(soundReaches(map, ev('knock_bucket', attic), lis(basement)).heard, true);
+  // amarelo: mesmo andar (qualquer cômodo) e o andar logo abaixo; não acima, nem dois abaixo
+  const far1 = map.rooms.filter(r => r.level === 1 && r.type !== 'stairs' && r.id !== corr1.id && !g[corr1.id].has(r.id));
+  const a = far1[0] || corr1;
+  assert.equal(soundReaches(map, ev('knock_vase', a), lis(corr1)).heard, true, 'amarelo mesmo andar');
+  assert.equal(soundReaches(map, ev('knock_vase', corr2), lis(corr1)).heard, true, 'amarelo andar de cima → ouvido embaixo');
+  assert.equal(soundReaches(map, ev('knock_vase', corr1), lis(corr2)).heard, false, 'amarelo não sobe');
+  assert.equal(soundReaches(map, ev('knock_vase', attic), lis(corr1)).heard, false, 'amarelo não desce dois andares');
+  // baixo: mesmo cômodo e vizinho sim; cômodo distante não
+  const nb = [...g[corr1.id]].map(i => map.rooms[i]).find(r => r.level === 1 && r.type !== 'stairs');
+  assert.equal(soundReaches(map, ev('door_wood', nb), lis(corr1)).heard, true, 'baixo: vizinho');
+  const nonNb = map.rooms.find(r => r.level === 1 && r.type !== 'stairs' && r.type !== 'corridor' && r.id !== nb.id && !g[nb.id].has(r.id) && Math.hypot(mid(r).x - mid(nb).x, mid(r).z - mid(nb).z) > 6);
+  if (nonNb) assert.equal(soundReaches(map, ev('door_wood', nb), lis(nonNb)).heard, false, 'baixo: distante');
+  // baixo com "below": rangido ouvido logo abaixo
+  const p = mid(corr2);
+  assert.equal(soundReaches(map, { type: 'creak', lvl: 'low', level: 2, ...p }, { level: 1, ...p }).heard, true, 'rangido ouvido logo abaixo');
+  assert.equal(soundReaches(map, { type: 'door_wood', lvl: 'low', level: 2, ...p }, { level: 1, ...p }).heard, false, 'porta de madeira não desce');
+});
+
+test('F2: som distante → corre; perto desacelera; depois circula e confere cômodos vizinhos', () => {
+  const m = makeMatch(2, SEED);
+  const c = clearCorridor(m, 1, 30);
+  m.debugPlaceCreature(c.x0, c.z, 1, Math.PI / 2);
+  m.creature.setState('patrol'); m.creature.path = null;
+  // balde caindo (vermelho) longe, no outro extremo do corredor
+  const k = { x: c.x1, z: c.z };
+  m.emitSound('knock_bucket', k.x, 0.3, k.z, 1, { source: 'object' });
+  let maxSp = 0, sawRush = false, slowNear = false, sawCheck = false; const rooms = new Set();
+  run(m, 30, () => {
+    const cr = m.creature;
+    if (cr.state === 'investigate' && cr.rushing) { sawRush = true; maxSp = Math.max(maxSp, cr.speed); }
+    if (cr.state === 'investigate' && !cr.rushing && Math.hypot(cr.x - k.x, cr.z - k.z) < 9 && cr.speed < 2.2) slowNear = true;
+    if (cr.state === 'check') { sawCheck = true; rooms.add(m.world.roomAt(cr.level, cr.x, cr.z)); }
+  });
+  assert.ok(sawRush && maxSp > 3.3, 'correu até o som (v máx ' + maxSp.toFixed(2) + ')');
+  assert.ok(slowNear, 'desacelerou ao chegar perto');
+  assert.ok(sawCheck, 'circulou/conferiu em volta');
+  assert.ok(rooms.size >= 2, 'conferiu mais de um cômodo (' + [...rooms].join(',') + ')');
 });
 
 test('F2: objetos derrubados atraem a criatura', () => {
@@ -109,7 +148,7 @@ test('F2: a criatura não recebe a posição exata do jogador ao ouvi-lo', () =>
   const c = clearCorridor(m, 1, 30);
   m.debugPlaceCreature(c.x0 + 16, c.z, 1, Math.PI / 2);
   m.debugPlacePlayer('p1', c.x0 + 9, c.z, 1);
-  run(m, 0.8, (t, dt) => stepPlayer(m, 'p1', -2.0, 0, dt));
+  run(m, 0.8, (t, dt) => stepPlayer(m, 'p1', -4.6, 0, dt, { run: true }));
   const src = { x: m.creature.invest.srcX, z: m.creature.invest.srcZ };
   // jogador é levado para longe sem fazer barulho: a criatura continua indo à origem do som
   const far = m.map.spawns[0];

@@ -17,7 +17,7 @@ test('F3: comportamentos anteriores continuam (visão e audição ativas)', () =
   m.debugPlacePlayer('p1', c.x0 + 9, c.z, 1);
   run(m, 1.2, strafe(m, 'p1'));
   assert.ok(['alert', 'chase'].includes(m.creature.state));
-  const h = hearingCheck(m, m.creature, makeSoundEvent(m, 'step_walk', c.x0 + 5, 0, c.z, 1));
+  const h = hearingCheck(m, m.creature, makeSoundEvent(m, 'step_run', c.x0 + 5, 0, c.z, 1));
   assert.equal(h.heard, true);
 });
 

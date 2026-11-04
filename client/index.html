@@ -16,6 +16,7 @@
       <div class="menu-bg"></div>
       <div class="menu-inner">
         <h1 class="title">NÃO SE MEXA!</h1>
+        <div class="beta" title="Versão beta">BETA</div>
         <p class="subtitle">Ela enxerga quem se move. Depois, ela escuta. Por fim, ela fareja.</p>
         <nav class="menu-buttons">
           <button data-go="mode" data-mode="solo">Jogar</button>
@@ -99,7 +100,8 @@
     <section id="tutorial" class="screen panel-screen">
       <div class="panel wide text">
         <h2>Como sobreviver</h2>
-        <p>Você e seus amigos estão presos numa mansão. Encontre as <b>chaves</b> escondidas em gavetas, armários, baús, caixas e prateleiras, destranque a <b>saída</b> no hall de entrada e fuja. Se a criatura <b>tocar</b> em você — ou você nela — é morte instantânea.</p>
+        <p>Você e seus amigos estão presos numa mansão. Encontre as <b>3 chaves</b> — dentro de gavetas (cada uma abre separada: mire com o pontinho), armários, baús, caixas e prateleiras, ou <b>sobre mesas</b> — e coloque-as na <b>porta de saída</b> do hall (qualquer um coloca, aos poucos: 2 + 1 vale). Com uma chave no bolso, a porta aparece através das paredes. Se a criatura te <b>tocar</b> enquanto você se mexe — ou depois de te perceber — é morte instantânea. Parado e quieto, ela passa raspando… e segue.</p>
+        <p><b>Barulho</b> (onda na tela): <span style="color:#ff4a4a">vermelho</span> = a casa inteira ouve · <span style="color:#ffc21a">amarelo</span> = o andar todo e o de baixo · <span style="color:#c8d2dc">branco</span> = o cômodo e os vizinhos. Agachado é silêncio total; andando em pé, às vezes a madeira range; correndo, seus passos são ouvidos. Esbarrar em objetos pode derrubá-los.</p>
         <h3>Controles</h3>
         <ul class="keys">
           <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> andar · <kbd>Mouse</kbd> olhar</li>
@@ -108,9 +110,9 @@
           <li><kbd>Espaço</kbd> pular · <kbd>E</kbd> interagir · <kbd>F</kbd> lanterna liga/desliga · <kbd>Esc</kbd> pausa (o mundo continua!)</li>
         </ul>
         <h3>As três fases</h3>
-        <p><b>Fase 1 — A criatura vê.</b> Ela só percebe quem <b>se move</b> dentro do campo de visão (~100°, até 18 m, sem atravessar paredes). Parado, você não é detectado — a não ser que ela já tenha te visto se movendo há pouco. 1 chave.</p>
-        <p><b>Fase 2 — A criatura escuta.</b> Passos, corrida, pulos, portas, gavetas e objetos derrubados geram sons. Agachar reduz o ruído; correr aumenta muito. Paredes e portas fechadas abafam o som. Ela vai até a origem <i>aproximada</i> e procura. 2 chaves.</p>
-        <p><b>Fase 3 — A criatura fareja.</b> A cada 20–30 s ela para e fareja. Você deixa rastros de cheiro que enfraquecem com o tempo. Ela segue a trilha até onde ela termina e procura com os olhos. 3 chaves.</p>
+        <p><b>Fase 1 — A criatura vê.</b> Ela só percebe quem <b>se move</b> dentro do campo de visão (~100°, até 18 m, sem atravessar paredes). Parado, você não é detectado — a não ser que ela já tenha te visto se movendo há pouco. Vista de muito longe, ela vem andando devagar na sua direção. Os sons ainda não importam.</p>
+        <p><b>Fase 2 — A criatura escuta.</b> Ela ouve conforme o nível do barulho (veja acima). Se o som for longe, ela <b>corre</b>; perto, desacelera, vai à origem <i>aproximada</i>, circula e confere os cômodos vizinhos.</p>
+        <p><b>Fase 3 — A criatura fareja.</b> A cada 20–30 s ela para e fareja. Você deixa rastros de cheiro que enfraquecem com o tempo. Ela segue a trilha até onde ela termina e procura com os olhos.</p>
         <h3>A lanterna</h3>
         <p>Com a lanterna <b>ligada</b> você enxerga melhor, mas também é mais visível: a criatura te percebe de mais longe (×1,3) e com um campo de visão maior. Se o feixe bater nela enquanto você se move, ela te detecta na hora; se você estiver parado, ela só nota a luz e vem investigar a região. <b>Desligada</b>, você é percebido de mais perto (×0,75), exceto sob luminárias acesas.</p>
         <button class="ghost" data-go="menu">Voltar</button>
@@ -173,6 +175,7 @@
       <div id="hudTL"><div id="hPhase"></div><div id="hKeys"></div><div id="hObj"></div></div>
       <div id="hudTR"><ul id="hPlayers"></ul><div id="hConn"></div></div>
       <div id="crosshair"></div>
+      <canvas id="wave" width="260" height="56" title="Barulho: vermelho = a casa toda ouve · amarelo = o andar e o de baixo · branco = cômodo e vizinhos"></canvas>
       <div id="prompt"></div>
       <div id="hudB"><div id="stamina"><div></div></div><span id="hFl">◉ lanterna ligada</span><span id="hCrouch"></span></div>
       <div id="toasts"></div>
@@ -185,7 +188,7 @@
     <div id="escaped" class="overlay hidden"><div><h1 class="big">VOCÊ ESCAPOU</h1><p>Aguardando o resultado dos colegas…</p><button id="btnEscSpectate" class="primary">Observar colegas</button></div></div>
     <div id="end" class="overlay hidden"><div class="panel"><h1 class="big" id="endTitle"></h1><div id="endInfo"></div><div class="row"><button id="btnAgain" class="primary">Jogar novamente</button><button id="btnNext">Próxima fase</button><button id="btnEndLobby">Voltar à sala</button><button id="btnEndMenu" class="ghost">Voltar ao menu</button></div><p class="hint" id="endHint"></p></div></div>
     <div id="reconnecting" class="overlay hidden"><div><div class="spinner"></div><h2>Conexão perdida — reconectando…</h2><p class="hint">A partida continua no servidor. Tentando voltar à mesma sala.</p></div></div>
-    <div id="disconnected" class="overlay red hidden"><div><h1 class="big">SERVIDOR DESCONECTADO</h1><p>Não foi possível falar com o servidor. A partida não está mais sincronizada.</p><button id="btnDcMenu" class="primary">Voltar ao menu</button></div></div>
+    <div id="disconnected" class="overlay red hidden"><div><h1 class="big">SERVIDOR DESCONECTADO</h1><p id="dcMsg">Não foi possível falar com o servidor. A partida não está mais sincronizada.</p><button id="btnDcMenu" class="primary">Voltar ao menu</button></div></div>
     <div id="diag" class="hidden">
       <div class="diag-head"><b>DIAGNÓSTICO</b><button id="diagToggle">–</button></div>
       <div id="diagBody">

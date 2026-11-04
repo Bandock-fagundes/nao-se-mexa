@@ -2,7 +2,7 @@
 import crypto from 'node:crypto';
 import { Match } from './match.js';
 import { randomSeed } from '../shared/rng.js';
-import { GEN_VERSION, MAX_PLAYERS, NET, PHASES } from '../shared/config.js';
+import { GEN_VERSION, MAX_PLAYERS, NET, PHASES, SERVER } from '../shared/config.js';
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const send = (ws, msg) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg)); };
@@ -73,7 +73,17 @@ export class RoomManager {
       max: MAX_PLAYERS,
     };
   }
-  broadcast(room, msg) { const s = JSON.stringify(msg); for (const p of room.players.values()) if (p.conn && p.conn.ws.readyState === 1) p.conn.ws.send(s); }
+  // droppable = mensagem descartável (snapshot 20 Hz): se a fila de envio de um cliente lento passar do limite,
+  // pula este snapshot para ele em vez de acumular memória (o próximo traz o estado completo de novo)
+  broadcast(room, msg, droppable = false) {
+    const s = JSON.stringify(msg);
+    for (const p of room.players.values()) {
+      const ws = p.conn && p.conn.ws;
+      if (!ws || ws.readyState !== 1) continue;
+      if (droppable && ws.bufferedAmount > SERVER.maxBuffered) { p.dropped = (p.dropped || 0) + 1; continue; }
+      try { ws.send(s); } catch (e) { console.error('falha ao enviar', e.message); }
+    }
+  }
   broadcastRoom(room) { this.broadcast(room, { t: 'room', room: this.roomInfo(room) }); }
   addPlayer(room, conn, name) {
     const id = 'p' + crypto.randomBytes(4).toString('hex');
@@ -136,7 +146,8 @@ export class RoomManager {
     // remove quem saiu de vez
     for (const [id, p] of room.players) if (!p.connected && !p.dcAt) room.players.delete(id);
     const players = [...room.players.values()].filter(p => p.connected).map(p => ({ id: p.id, name: p.name }));
-    room.match = new Match({ seed, phase: room.phase, players, test: room.test });
+    // keySeed aleatório: as chaves mudam de lugar a cada partida/reinício, mesmo com a mesma semente de casa
+    room.match = new Match({ seed, phase: room.phase, players, test: room.test, keySeed: randomSeed() });
     room.state = 'playing';
     room.lastTick = Date.now();
     for (const p of room.players.values()) {
@@ -172,7 +183,13 @@ export class RoomManager {
   // ---------- laço de simulação ----------
   tick() {
     const now = Date.now();
-    for (const room of this.rooms.values()) {
+    for (const room of [...this.rooms.values()]) try { this.tickRoom(room, now); } catch (e) { console.error(`[sala ${room.code}] erro no laço:`, e && e.stack || e); }
+  }
+  // avisa todos os jogadores conectados (ex.: o servidor vai reiniciar por atualização/deploy)
+  notifyAll(msg) { for (const room of this.rooms.values()) this.broadcast(room, msg); }
+  get activePlayers() { let n = 0; for (const r of this.rooms.values()) for (const p of r.players.values()) if (p.connected) n++; return n; }
+  tickRoom(room, now) {
+    {
       // tempo de graça de reconexão / migração de anfitrião
       for (const p of [...room.players.values()]) {
         if (p.connected || !p.dcAt) continue;
@@ -187,18 +204,26 @@ export class RoomManager {
       const anyConnected = [...room.players.values()].some(p => p.connected);
       if (!anyConnected) {
         room.emptySince = room.emptySince || now;
-        if (now - room.emptySince > 60000 || room.players.size === 0) { this.rooms.delete(room.code); continue; }
+        if (now - room.emptySince > (room.state === 'playing' ? NET.emptyRoomMs : 60000) || room.players.size === 0) { this.rooms.delete(room.code); return; }
       } else room.emptySince = null;
-      if (room.state !== 'playing' || !room.match) continue;
+      if (room.state !== 'playing' || !room.match) return;
       const dt = Math.min(0.1, (now - (room.lastTick || now)) / 1000) || this.tickMs / 1000;
       room.lastTick = now;
       const m = room.match;
-      m.tick(dt);
+      // v2: um erro na simulação de UMA sala nunca derruba o processo (antes: exceção no setInterval → servidor
+      // caía → todos desconectados). A sala registra o erro e continua no próximo tick.
+      try {
+        m.tick(dt);
+      } catch (e) {
+        room.errors = (room.errors || 0) + 1;
+        console.error(`[sala ${room.code}] erro na simulação (${room.errors}):`, e && e.stack || e);
+        m.events = m.events || [];
+      }
       if (m.events.length) { this.broadcast(room, { t: 'ev', events: m.events }); m.events = []; }
-      this.broadcast(room, { ...m.snapshot(), t: 's' });
+      try { this.broadcast(room, { ...m.snapshot(), t: 's' }, true); } catch (e) { console.error(`[sala ${room.code}] erro no snapshot:`, e && e.stack || e); }
       if (room.test) {
         room.diagAcc += dt;
-        if (room.diagAcc > 0.4) { room.diagAcc = 0; this.broadcast(room, { ...m.diag(), t: 'diag' }); }
+        if (room.diagAcc > 0.4) { room.diagAcc = 0; try { this.broadcast(room, { ...m.diag(), t: 'diag' }, true); } catch (e) { console.error('diag', e.message); } }
       }
       if (m.ended) {
         room.state = 'ended';

@@ -208,7 +208,7 @@ export function buildTextures(size = 512) {
     const vein = (x, y, ang, len, wd, depth) => {
       for (let s = 0; s < len; s++) {
         const nx = x + Math.cos(ang) * 4, ny = y + Math.sin(ang) * 4;
-        a.strokeStyle = `rgba(${42 + r() * 18},${36 + r() * 14},${52 + r() * 16},${0.45 + 0.35 * wd / 3})`; a.lineWidth = wd;
+        a.strokeStyle = `rgba(${42 + r() * 18},${36 + r() * 14},${52 + r() * 16},${0.26 + 0.3 * wd / 3})`; a.lineWidth = wd;
         a.beginPath(); a.moveTo(x, y); a.lineTo(nx, ny); a.stroke();
         a.strokeStyle = `rgba(70,55,75,0.1)`; a.lineWidth = wd + 4; a.beginPath(); a.moveTo(x, y); a.lineTo(nx, ny); a.stroke();
         h.strokeStyle = `rgba(215,215,215,0.7)`; h.lineWidth = wd + 1; h.beginPath(); h.moveTo(x, y); h.lineTo(nx, ny); h.stroke();
@@ -216,7 +216,7 @@ export function buildTextures(size = 512) {
         if (depth > 0 && r() < 0.07) vein(x, y, ang + (r() < 0.5 ? 0.8 : -0.8), len * 0.5, wd * 0.6, depth - 1);
       }
     };
-    for (let i = 0; i < 46; i++) vein(r() * w, r() * hh, r() * 6.28, 30 + r() * 45, 0.8 + r() * 2.2, 2);
+    for (let i = 0; i < 30; i++) vein(r() * w, r() * hh, r() * 6.28, 30 + r() * 45, 0.8 + r() * 2.2, 2);
     // rugas e dobras
     for (let i = 0; i < 320; i++) { const x = r() * w, y = r() * hh; h.strokeStyle = 'rgba(40,40,40,0.5)'; h.lineWidth = 1; h.beginPath(); h.moveTo(x, y); h.quadraticCurveTo(x + 6, y + (r() - 0.5) * 6, x + 12 + r() * 10, y + (r() - 0.5) * 4); h.stroke(); a.strokeStyle = 'rgba(70,60,60,0.14)'; a.beginPath(); a.moveTo(x, y); a.lineTo(x + 14, y + 2); a.stroke(); }
     // poros

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { createGameServer } from '../server/index.js';
 import { generateMansion } from '../shared/mapgen.js';
 import { clearCorridor } from '../test/helpers.js';
+import { World } from '../shared/world.js';
 import { launch, newPage, sleep } from './launch.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -36,6 +37,7 @@ try {
   await A.waitForSelector('#menu.on');
   await A.screenshot({ path: path.join(SHOTS, 'menu.png') });
   check('menu principal exibido', await A.$eval('.title', e => e.textContent === 'NÃO SE MEXA!'));
+  check('selo BETA pequeno sob o título', await A.$eval('.beta', e => e.textContent === 'BETA' && parseFloat(getComputedStyle(e).fontSize) < 20));
   // ---------- cria sala (aba TESTAR JOGO, para permitir comandos de teste) ----------
   await A.goto(`${base}/testar?e2e=1&quality=low`);
   await A.waitForSelector('#testar.on');
@@ -55,6 +57,7 @@ try {
   await B.waitForSelector('#lobby.on');
   await A.waitForFunction(() => document.querySelectorAll('#lobbyPlayers li').length === 2, { timeout: 15000 });
   check('anfitrião vê 2 jogadores', true);
+  check('sala mostra limite de 3 jogadores', /\/3\)/.test(await A.$eval('#lobbyCount', e => e.textContent)), await A.$eval('#lobbyCount', e => e.textContent));
   check('botão iniciar bloqueado até todos ficarem prontos', await A.$eval('#btnStart', b => b.disabled));
   await B.evaluate(() => { window.__app.diagOn = false; });
   await B.click('#btnReady');
@@ -64,6 +67,8 @@ try {
   await A.waitForFunction('window.__game && window.__game.lastSnap', { timeout: 240000, polling: 1000 });
   await B.waitForFunction('window.__game && window.__game.lastSnap', { timeout: 240000, polling: 1000 });
   log('partida iniciada nas duas páginas');
+  // conta quedas/reconexões (diagnóstico: CPU muito carregada pode atrasar o navegador)
+  for (const pg of [A, B]) await pg.evaluate(() => { window.__rc = 0; window.__app.net.on('reconnecting', () => { window.__rc++; }); });
   await A.evaluate(() => { window.__app.noRender = true; }); await B.evaluate(() => { window.__app.noRender = true; });
   const seedA = await A.evaluate(() => window.__game.seed), seedB = await B.evaluate(() => window.__game.seed);
   check('mesma semente nas duas páginas', seedA === seedB, seedA);
@@ -90,49 +95,100 @@ try {
   const SHOTQ = process.env.E2E_QUALITY || 'medium';
   await hq(A, SHOTQ);
   await shot(A, 'hallway-hand-flashlight-on.png', 4000);
-  // lanterna desligada (tecla F)
+  // lanterna desligada (tecla F) — traz a página A para frente (o teclado vai para a aba focada)
+  await A.bringToFront(); await sleep(300);
+  await A.mouse.click(640, 400); await sleep(300); // foco no documento (como o "clique para jogar")
   await A.keyboard.press('KeyF');
   await sleep(5000);
   check('tecla F desliga a lanterna', (await A.evaluate(() => window.__game.p.fl)) === false);
   await shot(A, 'hallway-flashlight-off.png', 4000);
   await A.keyboard.press('KeyF');
   await sleep(1500);
+  if (!(await A.evaluate(() => window.__game.p.fl))) await A.evaluate(() => window.__game.toggleFlashlight());
   const ext = await A.evaluate(() => window.__app.net.ping);
   log('ping', ext);
   // sincronização da lanterna do colega
   const bfl = await A.evaluate(() => window.__game.lastSnap.players.find(p => p.id !== window.__app.myId).fl);
   check('estado da lanterna do colega sincronizado', bfl === true);
   await hq(A, 'low');
-  // ---------- interação real com tecla E: porta mais próxima ----------
+  // ---------- v2: chaves — gaveta individual mirada com o pontinho + tecla E ----------
   const keys = await A.evaluate(() => new Promise(res => { const net = window.__app.net; const h = (m) => { if (m.keys) { res(m.keys); } }; net.on('dres', h); net.send({ t: 'debug', cmd: 'keys' }); }));
-  const k = keys[0];
-  const kc = map.containers[k.id];
+  check('3 chaves na casa', keys.length === 3, JSON.stringify(keys.map(k => ({ c: k.id, part: k.part, s: k.surface }))));
+  // prefere uma chave dentro de móvel com várias gavetas (testa a gaveta certa); senão a primeira dentro de móvel
+  const inside = keys.filter(k => k.id !== null);
+  const k = inside.find(q => map.containers[q.id].parts > 1) || inside[0] || keys[0];
+  const aimAt = async (pg, pt) => pg.evaluate((pt) => { const g = window.__game; const cam = window.__app.renderer.camera.position; const dx = pt.x - cam.x, dy = pt.y - cam.y, dz = pt.z - cam.z; g.setLook(Math.atan2(-dx, -dz), Math.atan2(dy, Math.hypot(dx, dz))); }, pt);
   await send(A, { t: 'debug', cmd: 'tp', x: k.ax, z: k.az, level: k.level });
   await sleep(2500);
-  // mira no esconderijo e usa E
-  await A.evaluate((c) => { const g = window.__game; const dx = c.x - g.p.x, dz = c.z - g.p.z; g.setLook(Math.atan2(-dx, -dz), -0.45); }, kc);
-  await sleep(2500);
-  let tgt = await A.evaluate(() => window.__game.target && window.__game.target.text);
-  log('alvo de interação:', tgt);
-  if (!tgt || !/Abrir|Pegar/.test(tgt)) { for (const p of [-0.75, -0.25, -0.95]) { await A.evaluate((p) => window.__game.setLook(window.__game.p.yaw, p), p); await sleep(2000); tgt = await A.evaluate(() => window.__game.target && window.__game.target.text); if (tgt && /Abrir|Pegar/.test(tgt)) break; } }
-  check('prompt de interação aparece ao mirar no esconderijo', !!tgt && /Abrir|Pegar/.test(tgt), tgt);
-  if (tgt && /Abrir/.test(tgt)) { await A.keyboard.press('KeyE'); await sleep(2500); }
-  else await send(A, { t: 'act', kind: 'container', id: k.id });
-  // se o E abriu um móvel vizinho (não o da chave), abre o certo pelo protocolo
-  if (!(await A.evaluate((id) => window.__game.view.containers[id].keyShown, k.id))) { log('E abriu outro móvel; abrindo o esconderijo da chave'); await send(A, { t: 'act', kind: 'container', id: k.id }); }
-  await A.waitForFunction((id) => window.__game.view.containers[id].keyShown, { timeout: 30000 }, k.id);
-  await sleep(2500);
+  if (k.id !== null) {
+    const ptc = await A.evaluate((id, part) => { const b = window.__game.view.containers[id].parts[part].box; return { x: (b.min.x + b.max.x) / 2, y: (b.min.y + b.max.y) / 2, z: (b.min.z + b.max.z) / 2 }; }, k.id, k.part);
+    await aimAt(A, ptc);
+    await sleep(2000);
+    let tgt = await A.evaluate(() => window.__game.target);
+    log('alvo de interação:', JSON.stringify(tgt));
+    check('mira (pontinho) seleciona a gaveta/porta certa do móvel', tgt && tgt.kind === 'container' && tgt.id === k.id && tgt.part === k.part, JSON.stringify(tgt));
+    if (tgt && tgt.kind === 'container' && tgt.id === k.id && tgt.part === k.part) await A.keyboard.press('KeyE');
+    else await send(A, { t: 'act', kind: 'container', id: k.id, part: k.part, open: true });
+    await A.waitForFunction((id, part) => window.__game.view.containers[id].parts[part].open, { timeout: 30000 }, k.id, k.part);
+    const others = await A.evaluate((id, part) => window.__game.view.containers[id].parts.filter((p, i) => i !== part && p.open).length, k.id, k.part);
+    check('só aquela gaveta abriu (as outras continuam fechadas)', others === 0, 'abertas além dela: ' + others);
+    await sleep(2200);
+  }
+  const kv = await A.evaluate((kid) => window.__game.keyViews[kid].mesh.visible, k.key);
+  check('chave revelada fica visível (brilho branco)', kv);
+  // mira na própria chave
+  const kp = await A.evaluate((kid) => { const v = new window.__game.keyViews[kid].mesh.position.constructor(); window.__game.keyViews[kid].mesh.getWorldPosition(v); return { x: v.x, y: v.y, z: v.z }; }, k.key);
+  await aimAt(A, kp);
   await hq(A, 'medium');
   await shot(A, 'key-revealed.png', 3000);
-  tgt = await A.evaluate(() => window.__game.target && window.__game.target.text);
-  if (tgt === '[E] Pegar chave') await A.keyboard.press('KeyE'); else await send(A, { t: 'act', kind: 'key', id: k.id });
-  await A.waitForFunction(() => window.__game.keys === 1, { timeout: 30000 });
+  let tgt = await A.evaluate(() => window.__game.target && window.__game.target.text);
+  check('prompt "[E] Pegar chave" ao mirar na chave', tgt === '[E] Pegar chave', tgt);
+  if (tgt === '[E] Pegar chave') await A.keyboard.press('KeyE'); else await send(A, { t: 'act', kind: 'key', key: k.key });
+  await A.waitForFunction(() => window.__game.myKeys === 1, { timeout: 30000 });
   await B.waitForFunction(() => window.__game.keys === 1, { timeout: 30000 });
   check('chave coletada em A aparece em B', true);
   await sleep(1200);
   await shot(A, 'hud.png', 3000);
   const hudText = await A.$eval('#hudTL', e => e.innerText);
-  check('HUD mostra fase, chaves e objetivo', /FASE 1 — A CRIATURA VÊ/.test(hudText) && /Chaves encontradas: 1\/1/.test(hudText) && /Objetivo/.test(hudText), hudText.replace(/\n/g, ' | '));
+  check('HUD mostra "Você tem 1 chave" e a porta 0/3', /FASE 1 — A CRIATURA VÊ/.test(hudText) && /Você tem 1 chave/.test(hudText) && /Porta de saída: 0\/3/.test(hudText), hudText.replace(/\n/g, ' | '));
+  check('com chave no inventário a saída aparece através das paredes', await A.evaluate(() => window.__game.debugState().exitXray));
+  // as outras duas: uma para A (protocolo) e uma para B
+  const rest = keys.filter(q => q.key !== k.key);
+  const grab = async (pg, q) => { await send(pg, { t: 'debug', cmd: 'tp', x: q.ax, z: q.az, level: q.level }); await sleep(1200); if (q.id !== null) await send(pg, { t: 'act', kind: 'container', id: q.id, part: q.part, open: true }); await sleep(800); await send(pg, { t: 'act', kind: 'key', key: q.key }); };
+  await grab(A, rest[0]); await A.waitForFunction(() => window.__game.myKeys === 2, { timeout: 30000 });
+  await grab(B, rest[1]); await B.waitForFunction(() => window.__game.myKeys === 1, { timeout: 30000 });
+  check('chaves no inventário de cada jogador (A=2, B=1)', true);
+  // ---------- sons em níveis + onda na tela ----------
+  // ponto livre ao lado de um objeto derrubável (de vidro, de preferência) no térreo
+  const wq = new World(map);
+  const freeNear = (q) => { for (const [ox, oz] of [[0.8, 0], [-0.8, 0], [0, 0.8], [0, -0.8], [0.6, 0.6], [-0.6, 0.6], [0.6, -0.6], [-0.6, -0.6], [1.1, 0], [-1.1, 0], [0, 1.1], [0, -1.1]]) { const x = q.x + ox, z = q.z + oz; if (wq.circleFree(q.level, x, z, 0.3) && wq.noWallBetween(q.level, x, z, q.x, q.z)) return { x, z }; } return null; };
+  const cands = map.knockables.filter(q => freeNear(q)).sort((a, b) => (['vase', 'bottles', 'candelabrum'].includes(b.kind) ? 1 : 0) - (['vase', 'bottles', 'candelabrum'].includes(a.kind) ? 1 : 0) || (a.level === 1 ? -1 : 1));
+  const kn = cands[0];
+  const kpos = freeNear(kn);
+  await send(A, { t: 'debug', cmd: 'tp', x: kpos.x, z: kpos.z, level: kn.level });
+  await sleep(1500);
+  await send(A, { t: 'act', kind: 'knock', id: kn.id });
+  await sleep(600);
+  const wv = await A.evaluate(() => window.__game.debugState().waves);
+  const expect = { vase: 'yellow', bottles: 'yellow', candelabrum: 'yellow', bucket: 'red', box: 'low' }[kn.kind];
+  check('objeto caindo gera onda com o nível certo (' + kn.kind + ' → ' + expect + ')', wv.includes(expect), JSON.stringify(wv));
+  await hq(A, 'medium');
+  await A.evaluate(() => { window.__game.pushWave(window.__game.waves.length ? window.__game.waves[window.__game.waves.length - 1].lvl : 'yellow', true); });
+  await shot(A, 'sound-wave.png', 300);
+  await hq(A, 'low');
+  // correr = passos ouvidos (onda baixa); agachar = silêncio
+  await send(A, { t: 'debug', cmd: 'tp', x: ax, z: az, level: 1 });
+  await A.evaluate(() => window.__game.setLook(-Math.PI / 2, 0));
+  await sleep(2500);
+  await A.evaluate(() => { window.__game.waves = []; });
+  await A.keyboard.down('ShiftLeft'); await A.keyboard.down('KeyW'); await sleep(2500); await A.keyboard.up('KeyW'); await A.keyboard.up('ShiftLeft');
+  const wRun = await A.evaluate(() => window.__game.debugState().waves);
+  check('correndo: passos geram onda BAIXA', wRun.includes('low'), JSON.stringify(wRun));
+  await send(A, { t: 'debug', cmd: 'tp', x: ax, z: az, level: 1 }); await sleep(2000);
+  await A.evaluate(() => { window.__game.waves = []; });
+  await A.keyboard.press('KeyC'); await A.keyboard.down('KeyW'); await sleep(2500); await A.keyboard.up('KeyW'); await A.keyboard.press('KeyC');
+  const wCr = await A.evaluate(() => window.__game.debugState().waves);
+  check('agachado: silêncio total (sem onda)', wCr.length === 0, JSON.stringify(wCr));
   await hq(A, 'low');
   // ---------- encontro com a criatura ----------
   await send(A, { t: 'debug', cmd: 'tp', x: ax, z: az, level: 1 });
@@ -148,6 +204,8 @@ try {
   // ---------- morte de B ----------
   const pB = await A.evaluate(() => window.__game.lastSnap.players.find(p => p.id !== window.__app.myId));
   await send(A, { t: 'debug', cmd: 'creature', x: pB.x + 0.7, z: pB.z, level: pB.level, yaw: -Math.PI / 2, state: 'hold' });
+  // B se mexe encostado nela (v2: o toque mata quem se mexe ou foi percebido; parado e despercebido, não)
+  for (let i = 0; i < 6; i++) { await B.evaluate(() => { window.__game.p.x += 0.04; }); await sleep(120); }
   // estado no servidor (o servidor de jogo roda neste mesmo processo)
   const srvMatch = () => [...srv.manager.rooms.values()][0].match;
   const dumpSrv = (tag) => { const m = srvMatch(); const b = m.players.get(ids.B), c = m.creature; log(tag, JSON.stringify({ B: { x: b.x, z: b.z, y: b.y, level: b.level, alive: b.alive, conn: b.connected }, C: { x: c.x, z: c.z, y: c.y, level: c.level, state: c.state } })); };
@@ -159,20 +217,45 @@ try {
   await shot(B, 'death.png', 2500);
   await A.waitForFunction((id) => window.__game.playersMeta.get(id).alive === false, { timeout: 30000 }, ids.B);
   check('A recebe a morte de B', true);
+  await sleep(1500);
+  const hp = await A.$eval('#hPlayers', e => e.innerText);
+  const toastsA = await A.$eval('#toasts', e => e.innerText);
+  check('morte do colega NÃO é anunciada (sem "morto" no HUD nem aviso com o nome)', !/morto/.test(hp) && !/Beto foi/.test(toastsA), hp.replace(/\n/g, ' | '));
+  const ghosts = await A.evaluate(() => window.__game.debugState().ghosts);
+  check('B morreu com chave → A vê o fantasminha através das paredes', ghosts.includes(ids.B), JSON.stringify(ghosts));
   await B.click('#btnSpectate');
   await sleep(4000);
   const specText = await B.$eval('#spec', e => e.textContent);
   check('B entra no modo espectador observando A', /observando Ana/.test(specText), specText);
   await shot(B, 'spectator.png', 3000);
-  // ---------- vitória: A destranca a saída e sai andando (teclado) ----------
+  // ---------- vitória: A coloca 2 chaves, pega a de B no corpo, coloca a 3ª e sai andando ----------
   await send(A, { t: 'debug', cmd: 'creature', x: cs.x, z: cs.z, level: cs.level, state: 'hold' });
   const e = map.exit;
   await send(A, { t: 'debug', cmd: 'tp', x: e.x, z: e.z + 1.4, level: 1, yaw: 0 });
   await A.evaluate(() => window.__game.setLook(0, 0.05));
   await sleep(2500);
   tgt = await A.evaluate(() => window.__game.target && window.__game.target.text);
-  check('prompt da saída', tgt === '[E] Destrancar a saída', tgt);
-  if (tgt === '[E] Destrancar a saída') await A.keyboard.press('KeyE'); else await send(A, { t: 'act', kind: 'exit', id: 0 });
+  check('prompt da saída: colocar 2 chaves', /Colocar 2 chaves na porta \(0\/3\)/.test(tgt || ''), tgt);
+  if (/Colocar/.test(tgt || '')) await A.keyboard.press('KeyE'); else await send(A, { t: 'act', kind: 'exit', id: 0 });
+  await A.waitForFunction(() => window.__game.deposited === 2, { timeout: 30000 });
+  check('depósito em parcelas: 2/3 e porta ainda trancada', !(await A.evaluate(() => window.__game.exitOpen)));
+  const bodyB = await A.evaluate(() => window.__game.lastSnap.players.find(p => p.id !== window.__app.myId));
+  await send(A, { t: 'debug', cmd: 'tp', x: bodyB.x + 0.8, z: bodyB.z, level: bodyB.level });
+  await sleep(2500);
+  await aimAt(A, { x: bodyB.x, y: bodyB.y + 0.4, z: bodyB.z });
+  await sleep(1500);
+  const hp2 = await A.$eval('#hPlayers', el => el.innerText);
+  check('achando o corpo, A fica sabendo da morte', /morto/.test(hp2), hp2.replace(/\n/g, ' | '));
+  tgt = await A.evaluate(() => window.__game.target && window.__game.target.text);
+  if (/Pegar as chaves/.test(tgt || '')) await A.keyboard.press('KeyE'); else await send(A, { t: 'act', kind: 'body', id: ids.B });
+  await A.waitForFunction(() => window.__game.myKeys === 1, { timeout: 30000 });
+  check('pegou a chave do corpo de B (fantasminha some)', !(await A.evaluate((id) => window.__game.debugState().ghosts.includes(id), ids.B)), tgt);
+  await send(A, { t: 'debug', cmd: 'tp', x: e.x, z: e.z + 1.4, level: 1, yaw: 0 });
+  await A.evaluate(() => window.__game.setLook(0, 0.05));
+  await sleep(2500);
+  tgt = await A.evaluate(() => window.__game.target && window.__game.target.text);
+  check('prompt da saída: colocar a última chave', /Colocar 1 chave na porta \(2\/3\)/.test(tgt || ''), tgt);
+  if (/Colocar/.test(tgt || '')) await A.keyboard.press('KeyE'); else await send(A, { t: 'act', kind: 'exit', id: 0 });
   await A.waitForFunction(() => window.__game.exitOpen, { timeout: 30000 });
   await B.waitForFunction(() => window.__game.exitOpen, { timeout: 30000 });
   check('saída aberta sincronizada', true);
@@ -188,7 +271,11 @@ try {
   const st = await A.evaluate(() => JSON.parse(localStorage.getItem('nsm_stats')));
   check('estatísticas salvas no localStorage', st.wins >= 1 && st.started >= 1, JSON.stringify(st));
   // ---------- diagnóstico ----------
-  await A.click('#btnAgain');
+  const rcA = await A.evaluate(() => window.__rc), rcB = await B.evaluate(() => window.__rc);
+  const hostIsA = await A.evaluate(() => window.__app.room && window.__app.room.hostId === window.__app.myId);
+  log('reconexões durante a partida: A=' + rcA + ' B=' + rcB + ' · anfitrião é A? ' + hostIsA);
+  check('nenhuma queda de conexão durante a partida', rcA === 0 && rcB === 0, `A=${rcA} B=${rcB}`);
+  if (hostIsA) await A.click('#btnAgain'); else await B.click('#btnAgain');
   await A.waitForFunction((s) => window.__game && window.__game.seed !== s && window.__game.lastSnap, { timeout: 240000, polling: 1000 }, seedA);
   check('reinício gera nova semente', (await A.evaluate(() => window.__game.seed)) !== seedA);
   await sleep(6000);
@@ -196,6 +283,18 @@ try {
   await shot(A, 'diagnostics-panel.png', 3000);
   const diagText = await A.$eval('#diagText', e => e.textContent);
   check('painel de diagnóstico mostra criatura, sentidos e semente', /Criatura:/.test(diagText) && /Sentidos:/.test(diagText) && /Semente:/.test(diagText), diagText.split('\n').slice(0, 3).join(' | '));
+  // limite de 3 jogadores (clientes WebSocket diretos numa sala nova)
+  {
+    const { default: WS } = await import('ws');
+    const open = () => new Promise((res) => { const w = new WS(`ws://localhost:${srv.port}/ws`); const c = { w, msgs: [] }; w.on('message', d => c.msgs.push(JSON.parse(d))); w.on('open', () => res(c)); });
+    const wait = async (c, f) => { for (let i = 0; i < 100; i++) { const m = c.msgs.find(f); if (m) return m; await sleep(30); } return null; };
+    const cl = []; for (let i = 0; i < 4; i++) cl.push(await open());
+    cl[0].w.send(JSON.stringify({ t: 'create', name: 'X0' })); const j = await wait(cl[0], m => m.t === 'joined');
+    for (let i = 1; i < 4; i++) cl[i].w.send(JSON.stringify({ t: 'join', code: j.code, name: 'X' + i }));
+    const ok2 = await wait(cl[2], m => m.t === 'joined'), err4 = await wait(cl[3], m => m.t === 'error');
+    check('sala aceita 3 jogadores e recusa o 4º', !!ok2 && !!err4 && /máximo 3/.test(err4.msg), err4 && err4.msg);
+    for (const c of cl) c.w.close();
+  }
   // mapa gerado na aba TESTAR JOGO
   const C = await newPage(browser, `${base}/testar?e2e=1`, (...a) => errors.push('C ' + a.join(' ')));
   await C.waitForSelector('#testar.on');

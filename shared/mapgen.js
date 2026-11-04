@@ -55,6 +55,27 @@ const TEMPLATES = {
   acorridor: [F('crate', 2, 1, 'LOW', [1, 2], { container: 'crate' }), F('sheet', 2, 1, 'LOW', [1, 2])],
 };
 
+// Gavetas individuais (v2): quantas gavetas cada móvel tem — o cliente desenha exatamente estas.
+// wMeters = largura do móvel ao longo da parede.
+export function drawerLayout(kind, wMeters) {
+  if (kind === 'desk') return { rows: 3, cols: 2 };
+  if (kind === 'reading_table') return { rows: 1, cols: 1 };
+  const rows = kind === 'dresser' ? 3 : kind === 'sideboard' ? 2 : 1;
+  const cols = (wMeters - 0.08) > 1.2 ? 2 : 1;
+  return { rows, cols };
+}
+// Superfícies onde uma chave pode ficar "sobre a mesa" (altura do tampo em metros)
+export const SURFACE_Y = { desk: 0.81, dining_table: 0.79, ktable: 0.81, reading_table: 0.79, coffee_table: 0.48, side_table: 0.69, nightstand: 0.61, console: 0.86, sideboard: 0.93, dresser: 1.01, counter: 0.91 };
+// Móveis obrigatórios por cômodo (o gerador garante e o validador confere)
+// v2 fase 2: altura máxima (m) do modelo 3D de cada móvel — conferida contra os modelos em test/overlap.test.js
+export const PROP_HEIGHT = {"winerack":1.9,"barrel_big":0.93,"crate":1.06,"boiler":3.3,"mshelf":2.15,"chest":0.77,"barrel":0.75,"washtub":1.04,"sack":0.52,"fireplace":1.65,"bookshelf":2.15,"sofa":1,"armchair":1.28,"coffee_table":0.51,"cabinet":2.15,"side_table":0.68,"desk":1.11,"globe":1.18,"bathtub":1.1,"sink":2.03,"toilet":1.89,"bcabinet":1.85,"console":1.1,"clock":2.16,"plant":1.21,"dining_table":1.19,"sideboard":1.17,"china_cabinet":2.3,"counter":1.08,"stove":2.7,"kshelf":2.15,"ktable":1.11,"pshelf":2.15,"bed":1.2,"wardrobe":2.3,"nightstand":0.6,"piano":1.6,"crib":0.97,"rocking_horse":0.92,"dresser":1.77,"reading_table":0.93,"bed_big":2.36,"sheet":1.4,"oldwardrobe":2.3,"rocking_chair":1.22,"mannequin":1.81,"bench":0.5};
+export const REQUIRED_FURNITURE = {
+  bedroom: ['bed', 'wardrobe', 'nightstand'], master: ['bed_big', 'wardrobe', 'nightstand', 'dresser'], nursery: ['crib', 'wardrobe', 'chest'],
+  kitchen: ['counter', 'stove', 'kshelf'], bathroom: ['bathtub', 'sink', 'toilet'], living: ['fireplace', 'sofa', 'bookshelf'],
+  dining: ['dining_table', 'sideboard', 'china_cabinet'], study: ['desk', 'bookshelf'], library: ['bookshelf', 'reading_table'],
+  linen: ['wardrobe'], hall: ['cabinet', 'console'], music: ['piano'], pantry: ['pshelf'], cellar: ['winerack'], boiler: ['boiler'], attic: ['oldwardrobe'],
+};
+
 const KNOCK_KINDS = ['vase', 'vase', 'bottles', 'candelabrum', 'bucket', 'box', 'box'];
 const DOOR_TYPES = ['wood', 'wood', 'wood', 'heavy', 'rusty'];
 
@@ -400,19 +421,43 @@ class Gen {
     for (const room of m.rooms) {
       const tpl = (room.type === 'corridor' && room.level === 0) ? TEMPLATES.bcorridor : (room.type === 'corridor' && room.level === 3) ? TEMPLATES.acorridor : (TEMPLATES[room.type] || []);
       if (room.type === 'stairs') continue;
-      for (const item of tpl) {
+      const req = REQUIRED_FURNITURE[room.type] || [];
+      // v2: primeiro os móveis obrigatórios (com mais tentativas), depois o resto do modelo do cômodo
+      const order = [...tpl.filter(it => req.includes(it.kind)), ...tpl.filter(it => !req.includes(it.kind))];
+      for (const item of order) {
         let n = rng.int(item.n[0], item.n[1]);
+        if (req.includes(item.kind)) n = Math.max(1, n);
         if (room.type === 'corridor') n = Math.min(n + Math.floor((room.x1 - room.x0) / 30), 4);
         for (let k = 0; k < n; k++) {
-          for (let t = 0; t < 30; t++) { if (this.tryPlace(room, item)) break; }
+          const tries = req.includes(item.kind) && k === 0 ? 160 : 30;
+          for (let t = 0; t < tries; t++) { if (this.tryPlace(room, item)) break; }
         }
       }
+    }
+  }
+  // Superfícies (tampos) onde uma chave pode ficar à vista
+  collectSurfaces() {
+    const m = this.map, rng = this.rng;
+    m.surfaces = [];
+    for (const p of m.props) {
+      const y = SURFACE_Y[p.kind]; if (y === undefined) continue;
+      // célula livre vizinha (de onde o jogador alcança)
+      const lv = m.levels[p.level]; let acc = null;
+      for (let z = p.z0 - 1; z <= p.z0 + p.sz && !acc; z++) for (let x = p.x0 - 1; x <= p.x0 + p.sx; x++) {
+        if (x >= p.x0 && x < p.x0 + p.sx && z >= p.z0 && z < p.z0 + p.sz) continue;
+        if (x < 0 || z < 0 || x >= W || z >= D) continue;
+        if (lv.grid[ix(x, z)] === T.FLOOR && lv.room[ix(x, z)] === p.room) { acc = [x, z]; break; }
+      }
+      if (!acc) continue;
+      // ponto sobre o tampo, um pouco para dentro (deslocamento aleatório pequeno)
+      const ox = (rng.next() - 0.5) * Math.max(0, p.sx * CELL - 0.5) * 0.6, oz = (rng.next() - 0.5) * Math.max(0, p.sz * CELL - 0.5) * 0.6;
+      m.surfaces.push({ id: m.surfaces.length, prop: p.id, kind: p.kind, level: p.level, room: p.room, x: p.x + ox, z: p.z + oz, y: LEVELS[p.level].y + y, access: acc, ax: (acc[0] + 0.5) * CELL, az: (acc[1] + 0.5) * CELL });
     }
   }
   roomWallSides(room) { return ['S', 'N', 'W', 'E']; }
   tryPlace(room, item) {
     const rng = this.rng, L = room.level, lv = this.map.levels[L];
-    let rect, facing, behind = [], front = [];
+    let rect, facing, behind = [], front = [], ring = null;
     if (item.place === 'center') {
       const horiz = rng.chance(0.5) || room.type === 'corridor';
       const sx = horiz ? item.w : item.d, sz = horiz ? item.d : item.w;
@@ -421,6 +466,12 @@ class Gen {
       const mx = Math.floor((room.x0 + room.x1 + 1 - sx) / 2), mz = Math.floor((room.z0 + room.z1 + 1 - sz) / 2);
       const x0 = Math.max(cx0, Math.min(cx1, mx + rng.int(-2, 2))), z0 = Math.max(cz0, Math.min(cz1, mz + rng.int(-2, 2)));
       rect = [x0, z0, sx, sz]; facing = horiz ? (rng.chance(0.5) ? 0 : 2) : (rng.chance(0.5) ? 1 : 3);
+      // v2: móveis do centro (mesas com cadeiras) exigem um anel livre de 1 célula em volta, que fica reservado —
+      // assim as cadeiras/bordas do modelo 3D nunca atravessam outro móvel
+      ring = [];
+      for (let x = x0 - 1; x <= x0 + sx; x++) { ring.push([x, z0 - 1], [x, z0 + sz]); }
+      for (let z = z0; z < z0 + sz; z++) { ring.push([x0 - 1, z], [x0 + sx, z]); }
+      for (const [x, z] of ring) { const t = this.get(L, x, z); if (t !== T.FLOOR && t !== T.CURTAIN) return false; }
     } else {
       let sides = ['S', 'N', 'W', 'E'];
       if (room.type === 'corridor') sides = ['S', 'N'];
@@ -468,13 +519,15 @@ class Gen {
     const t = item.block === 'TALL' ? T.TALL : T.LOW;
     for (const i of cells) lv.grid[i] = t;
     if (!this.roomStillOk(room, access)) { for (const i of cells) lv.grid[i] = T.FLOOR; return false; }
+    if (ring) for (const [x, z] of ring) if (x >= 0 && z >= 0 && x < W && z < D) this.reserved[L][ix(x, z)] = 1;
     // reserva o espaço à frente para não ser bloqueado depois
     for (const [x, z] of front) if (x >= 0 && z >= 0 && x < W && z < D && lv.room[ix(x, z)] === room.id) this.reserved[L][ix(x, z)] = 1;
     const prop = { id: this.map.props.length, kind: item.kind, level: L, room: room.id, x0, z0, sx, sz, facing, block: item.block, variant: rng.int(0, 999) };
     prop.x = (x0 + sx / 2) * CELL; prop.z = (z0 + sz / 2) * CELL;
     this.map.props.push(prop);
     if (item.container) {
-      const c = { id: this.map.containers.length, prop: prop.id, kind: item.container, level: L, room: room.id, x: prop.x, z: prop.z, access, ax: (access[0] + 0.5) * CELL, az: (access[1] + 0.5) * CELL };
+      const c = { id: this.map.containers.length, prop: prop.id, kind: item.container, level: L, room: room.id, x: prop.x, z: prop.z, access, ax: (access[0] + 0.5) * CELL, az: (access[1] + 0.5) * CELL, parts: 1 };
+      if (item.container === 'drawer') { const wm = ((facing === 0 || facing === 2) ? sx : sz) * CELL; const dl = drawerLayout(item.kind, wm); c.parts = dl.rows * dl.cols; }
       this.map.containers.push(c);
       prop.container = c.id;
     }
@@ -624,6 +677,80 @@ class Gen {
       placed++;
     }
   }
+  // ---------- v2 fase 2: NADA atravessa nada ----------
+  // Passo determinístico (não usa o rng, então não muda o resto da casa): quadros, luminárias de parede,
+  // janelas e cortinas não podem ficar atrás de um móvel mais alto que eles nem se sobrepor na mesma parede.
+  // As medidas são as mesmas do desenho (client/src/render/decorboxes.js); o teste test/overlap.test.js
+  // confere tudo em 3D com os modelos de verdade.
+  resolveWallDecor() {
+    const m = this.map;
+    const hAt = new Map(); // altura máxima de móvel por célula
+    for (const p of m.props) for (let z = p.z0; z < p.z0 + p.sz; z++) for (let x = p.x0; x < p.x0 + p.sx; x++) {
+      const k = p.level + ':' + x + ':' + z; hAt.set(k, Math.max(hAt.get(k) || 0, PROP_HEIGHT[p.kind] ?? 2.4));
+    }
+    // maior altura de móvel na faixa à frente de um item de parede (largura 2*hw, profundidade até 'depth')
+    const maxFront = (L, x, z, rot, hw, depth, along = 0) => {
+      const nx = Math.sin(rot), nz = Math.cos(rot), tx = Math.cos(rot), tz = -Math.sin(rot);
+      let h = 0;
+      const steps = Math.max(2, Math.ceil(2 * (hw + 0.04) / 0.15));
+      for (let i = 0; i <= steps; i++) for (const dd of [0.03, depth / 2, depth]) {
+        const s = -(hw + 0.04) + i * 2 * (hw + 0.04) / steps; // +4 cm de folga nas pontas
+        const px = x + tx * (along + s) + nx * dd, pz = z + tz * (along + s) + nz * dd;
+        h = Math.max(h, hAt.get(L + ':' + Math.floor(px / CELL) + ':' + Math.floor(pz / CELL)) || 0);
+      }
+      return h;
+    };
+    // objetos derrubáveis encostados na parede: as cortinas não podem descer sobre eles
+    for (const k of m.knockables) { const kk = k.level + ':' + k.cx + ':' + k.cz; hAt.set(kk, Math.max(hAt.get(kk) || 0, 0.6)); }
+    // itens já aceitos por parede: plano = andar + rotação + coordenada da parede
+    const placed = [];
+    const planeOf = (L, x, z, rot) => L + '|' + rot.toFixed(3) + '|' + (Math.abs(Math.sin(rot)) > 0.5 ? x : z).toFixed(2);
+    const alongOf = (x, z, rot) => x * Math.cos(rot) - z * Math.sin(rot);
+    const clash = (it) => placed.some(o => o.plane === it.plane && o.a0 < it.a1 + 0.05 && o.a1 > it.a0 - 0.05 && o.y0 < it.y1 + 0.03 && o.y1 > it.y0 - 0.03);
+    const item = (L, x, z, rot, hw, y0, y1) => { const c = alongOf(x, z, rot); return { plane: planeOf(L, x, z, rot), a0: c - hw, a1: c + hw, y0, y1 }; };
+    // 1) janelas (moldura até 0,12 m da parede; cortinas laterais até 0,17 m e quase até o chão)
+    m.windows = m.windows.filter(w => {
+      const ww = w.small ? 0.6 : 1.0, wh = w.small ? 0.6 : 1.7, wy = w.small ? 1.4 : 1.75;
+      const lo = wy - wh / 2 - 0.04;
+      if (maxFront(w.level, w.x, w.z, w.rot, ww / 2 + 0.1, 0.12) > lo - 0.02) return false;
+      if (!w.small && !w.curtain) for (const s of [-1, 1]) if (maxFront(w.level, w.x, w.z, w.rot, 0.225, 0.17, s * (ww / 2 + 0.2)) > 0) w.noDrape = true;
+      const it = item(w.level, w.x, w.z, w.rot, ww / 2 + (w.noDrape || w.small || w.curtain ? 0.1 : 0.425), lo, wy + wh / 2 + 0.04);
+      if (clash(it)) return false;
+      placed.push(it); return true;
+    });
+    // 2) luminárias de parede (0,24 m de largura, 0,32 m de braço) — saem se houver móvel alto embaixo ou outra coisa no lugar
+    m.lamps = m.lamps.filter(l => {
+      if (l.kind !== 'wall') return true;
+      const rel = l.y - LEVELS[l.level].y;
+      if (maxFront(l.level, l.x, l.z, l.rot, 0.12, 0.32) > rel - 0.06) return false;
+      const it = item(l.level, l.x, l.z, l.rot, 0.12, rel - 0.04, rel + 0.2);
+      if (clash(it)) return false;
+      placed.push(it); return true;
+    });
+    // 3) quadros
+    m.decor = m.decor.filter(dc => {
+      if (dc.kind !== 'painting') return true;
+      const lo = dc.y - dc.h / 2 - 0.05;
+      if (maxFront(dc.level, dc.x, dc.z, dc.rot, dc.w / 2 + 0.05, 0.06) > lo - 0.03) return false;
+      const it = item(dc.level, dc.x, dc.z, dc.rot, dc.w / 2 + 0.05, lo, dc.y + dc.h / 2 + 0.05);
+      if (clash(it)) return false;
+      placed.push(it); return true;
+    });
+    // 4) velas: apoiadas exatamente no tampo do móvel. Na mesa de jantar o candelabro do próprio móvel já tem velas:
+    //    vira só a luz da chama (sem modelo extra), na altura das velas dele.
+    for (const l of m.lamps) {
+      if (l.kind !== 'candle' || l.prop === undefined) continue;
+      const p = m.props[l.prop], base = LEVELS[l.level].y;
+      if (p.kind === 'dining_table') { l.kind = 'flame'; l.y = base + 1.2; continue; }
+      l.y = base + (SURFACE_Y[p.kind] ?? 0.8);
+      if (p.kind === 'desk') {
+        // escrivaninha: tampo recuado e com papéis/livro/tinteiro — a vela vai para o canto livre da frente-esquerda
+        const horiz = p.facing === 0 || p.facing === 2, d = (horiz ? p.sz : p.sx) * CELL, Dp = Math.min(d - 0.4, 0.75);
+        const lx = -0.32, lz = -(d - Dp) / 2 + 0.02 + Math.min(0.2, Dp / 2 - 0.07), th = [0, Math.PI / 2, Math.PI, -Math.PI / 2][p.facing];
+        l.x = p.x + lx * Math.cos(th) + lz * Math.sin(th); l.z = p.z - lx * Math.sin(th) + lz * Math.cos(th);
+      }
+    }
+  }
   wallSpot(room, y) {
     const rng = this.rng, L = room.level;
     for (let t = 0; t < 20; t++) {
@@ -714,11 +841,13 @@ class Gen {
   }
 }
 
-function tryGenerate(seed, attempt) {
+export function tryGenerate(seed, attempt) {
   const g = new Gen(seed, attempt);
   if (!g.build()) return null;
   g.placeFurniture();
   g.decorate();
+  g.resolveWallDecor();
+  g.collectSurfaces();
   if (!g.creatureSpawn()) return null;
   // ids de sala para células de porta/arco (para superfície/sons) — usa sala vizinha
   return g.map;
@@ -798,6 +927,10 @@ export function validateMap(map) {
     if (t !== T.LOW && t !== T.TALL) errors.push('móvel fora da grade');
   }
   for (const k of map.knockables) if (get(k.level, k.cx, k.cz) !== T.FLOOR) errors.push('objeto derrubável em célula inválida');
+  // 7b. (v2) cada cômodo tem os móveis que se espera dele (ex.: quarto com cama, guarda-roupa e criado-mudo)
+  for (const r of map.rooms) for (const k of (REQUIRED_FURNITURE[r.type] || [])) if (!map.props.some(p => p.room === r.id && p.kind === k)) errors.push(`falta ${k} em ${r.name} L${r.level}`);
+  // 7c. (v2) superfícies para chaves com acesso alcançável
+  for (const sf of (map.surfaces || [])) if (!reach(sf.level, sf.access[0], sf.access[1])) errors.push('superfície inacessível ' + sf.id);
   // 8. portas: os dois lados livres (sem móveis bloqueando)
   for (const d of map.doors) {
     for (const [x, z] of d.cells) {

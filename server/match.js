@@ -2,7 +2,7 @@
 import { generateMansion } from '../shared/mapgen.js';
 import { World, cellOf } from '../shared/world.js';
 import { Nav } from '../shared/nav.js';
-import { PHASES, PLAYER, CREATURE, AI, CELL, LEVELS, T, NET } from '../shared/config.js';
+import { PHASES, PLAYER, CREATURE, AI, CELL, LEVELS, T, NET, SOUND_TYPES, CREAK } from '../shared/config.js';
 import { makeRng } from '../shared/rng.js';
 import { Creature, STATE_LABEL } from './creature.js';
 import { ScentGrid } from './scent.js';
@@ -21,11 +21,15 @@ export class Match {
     this.rng = makeRng('match|' + this.seed + '|' + phase + '|' + (keySeed ?? ''));
     this.t = 0; this.soundSeq = 0; this.sounds = []; this.events = [];
     this.players = new Map();
+    // v2: cada gaveta/porta de móvel abre separadamente (partOpen[c][parte]); containerOpen = "alguma parte aberta"
+    this.partOpen = this.map.containers.map(c => new Uint8Array(c.parts || 1));
     this.containerOpen = new Uint8Array(this.map.containers.length);
-    this.keyIn = new Map();
-    this.keysCollected = [];
+    this.keysCollected = [];            // histórico de chaves apanhadas (quem/quando)
     this.keysNeeded = this.phaseCfg.keys;
-    this.knocked = new Uint8Array(this.map.knockables.length);
+    this.deposited = 0;                 // chaves já colocadas na porta de saída (por qualquer jogador)
+    this.knocked = new Uint8Array(this.map.knockables.length);   // 1 = caído
+    this.wobbleT = new Float64Array(this.map.knockables.length).fill(-1e9); // último balanço
+    this.doorT = new Float64Array(this.map.doors.length).fill(-1e9);       // última troca de estado (anti-repique)
     this.exitOpen = false; this.ended = false; this.result = null;
     this.scent = new ScentGrid(); this.scentAcc = 0; this.pruneAcc = 0;
     this.litLamps = this.map.lamps.filter(l => l.state !== 'off');
@@ -35,27 +39,47 @@ export class Match {
     this.creature = new Creature(this);
     this.startT = 0;
   }
+  // v2: 3 chaves por casa, DENTRO de móveis (uma gaveta/porta específica) ou SOBRE mesas/tampos.
+  // Posições mudam a cada partida (semente da casa + keySeed aleatório por partida).
   distributeKeys() {
     const m = this.map, rng = this.rng;
     const hall = m.exit.room;
     const s0 = m.spawns[0];
-    const cands = m.containers.filter(c => c.room !== hall && !(c.level === 1 && Math.hypot(c.x - s0.x, c.z - s0.z) < 7));
-    rng.shuffle(cands);
-    const chosen = [];
-    const usedRooms = new Set(), usedLevels = new Set();
+    const okSpot = (o) => o.room !== hall && !(o.level === 1 && Math.hypot(o.x - s0.x, o.z - s0.z) < 7);
+    const inside = [];
+    for (const c of m.containers) if (okSpot(c)) for (let part = 0; part < (c.parts || 1); part++) inside.push({ type: 'part', c: c.id, part, room: c.room, level: c.level });
+    const surf = (m.surfaces || []).filter(okSpot).map(sf => ({ type: 'surface', s: sf.id, room: sf.room, level: sf.level }));
+    rng.shuffle(inside); rng.shuffle(surf);
+    const chosen = [], usedRooms = new Set(), usedLevels = new Set();
     for (let pass = 0; pass < 3 && chosen.length < this.keysNeeded; pass++) {
-      for (const c of cands) {
-        if (chosen.length >= this.keysNeeded) break;
-        if (chosen.includes(c)) continue;
-        if (usedRooms.has(c.room)) continue;
-        if (pass === 0 && usedLevels.has(c.level)) continue;
-        if (pass === 0 && c.level === 3 && rng.chance(0.6)) continue; // sótão possível, não obrigatório
-        chosen.push(c); usedRooms.add(c.room); usedLevels.add(c.level);
+      for (let tries = 0; tries < inside.length + surf.length && chosen.length < this.keysNeeded; tries++) {
+        // ~30% das chaves ficam à vista sobre uma mesa; o resto dentro de móveis
+        const pool = (surf.length && rng.chance(0.3)) ? surf : inside;
+        const o = pool[tries % pool.length];
+        if (!o || chosen.includes(o) || usedRooms.has(o.room)) continue;
+        if (pass === 0 && usedLevels.has(o.level)) continue;
+        if (pass === 0 && o.level === 3 && rng.chance(0.6)) continue;
+        chosen.push(o); usedRooms.add(o.room); usedLevels.add(o.level);
       }
     }
-    chosen.forEach((c, i) => this.keyIn.set(c.id, i));
-    this.keyContainers = chosen.map(c => c.id);
+    for (const o of inside.concat(surf)) { if (chosen.length >= this.keysNeeded) break; if (!chosen.includes(o)) chosen.push(o); }
+    // estado de cada chave: placed (no lugar) → carried (com um jogador) → deposited (na porta)
+    this.keys = chosen.map((o, i) => ({ id: i, spot: o, state: 'placed', by: null }));
+    this.keyContainers = chosen.filter(o => o.type === 'part').map(o => o.c);
   }
+  // posição de mundo da chave (para checagem de distância e diagnóstico)
+  keySpotPos(k) {
+    const o = k.spot;
+    if (o.type === 'part') { const c = this.map.containers[o.c]; return { x: c.x, z: c.z, ax: c.ax, az: c.az, level: c.level }; }
+    const sf = this.map.surfaces[o.s]; return { x: sf.x, z: sf.z, ax: sf.ax, az: sf.az, level: sf.level, y: sf.y };
+  }
+  keyVisible(k) {
+    if (k.state !== 'placed') return false;
+    if (k.spot.type === 'surface') return true;
+    return !!this.partOpen[k.spot.c][k.spot.part];
+  }
+  keysInPart(cid, part) { return this.keys.filter(k => k.state === 'placed' && k.spot.type === 'part' && k.spot.c === cid && k.spot.part === part).map(k => k.id); }
+  carriedBy(pid) { return this.keys.filter(k => k.state === 'carried' && k.by === pid).length; }
   addPlayer(id, name, idx) {
     const s = this.map.spawns[idx % this.map.spawns.length];
     const p = {
@@ -73,7 +97,8 @@ export class Match {
     this.sounds.push(ev);
     if (this.sounds.length > 60) this.sounds.shift();
     if (this.creature) this.creature.onSound(ev);
-    if (!type.startsWith('step_')) this.emit({ type: 'sound', sound: type, x: +x.toFixed(2), y: +y.toFixed(2), z: +z.toFixed(2), level, by: extra.by });
+    // clientes: tocam o som (posicional) e desenham a onda com a cor do nível (lvl)
+    if (type !== 'step_walk' && type !== 'step_crouch') this.emit({ type: 'sound', sound: type, x: +x.toFixed(2), y: +y.toFixed(2), z: +z.toFixed(2), level, by: extra.by, lvl: ev.lvl });
     return ev;
   }
   creatureSound(kind) { const c = this.creature; if (c) this.emit({ type: 'csound', kind, x: +c.x.toFixed(2), y: +c.y.toFixed(2), z: +c.z.toFixed(2) }); }
@@ -114,32 +139,48 @@ export class Match {
     const speed = Math.hypot(p.x - h0.x, p.z - h0.z) / wdt;
     p.speed = speed;
     if (speed > AI.moveSpeedThreshold || dist > 0.06) p.lastBodyMoveT = t;
-    // passos → eventos sonoros
+    // passos → eventos sonoros (v2): agachado = silêncio; andando em pé = só às vezes a madeira range
+    // (ouvido de perto); correndo = sem rangido, mas os passos "pá pá pá" são ouvidos
     p.stepAcc += dist;
     const kind = speed > 3.3 ? 'run' : (crouch && speed < 1.9 ? 'crouch' : 'walk');
     const stride = kind === 'run' ? 0.95 : kind === 'crouch' ? 0.55 : 0.75;
     if (p.stepAcc >= stride) {
       p.stepAcc = 0;
-      this.emitSound('step_' + kind, p.x, p.y, p.z, p.level, { by: p.id, source: 'player' });
+      if (kind === 'run') this.emitSound('step_run', p.x, p.y, p.z, p.level, { by: p.id, source: 'player' });
+      else if (kind === 'walk') {
+        const surf = this.world.surfaceAt(p.level, p.x, p.z);
+        if (CREAK.surfaces.includes(surf) && this.world.stairAt(p.level, cellOf(p.x), cellOf(p.z)) < 0 && this.rng.chance(CREAK.chance)) this.emitSound('creak', p.x, p.y, p.z, p.level, { by: p.id, source: 'player' });
+        else this.emitSound('step_walk', p.x, p.y, p.z, p.level, { by: p.id, source: 'player' });
+      }
     }
     // pulo / aterrissagem
     if (fin(inp.jump) && inp.jump > p.jumpCount) { p.jumpCount = inp.jump; p.jumpT = t; }
+    let landed = false;
     if (fin(inp.land) && inp.land > p.landCount) {
       p.landCount = inp.land;
-      if (t - p.lastLandT > 0.4) { p.lastLandT = t; this.emitSound('land', p.x, p.y, p.z, p.level, { by: p.id, source: 'player' }); }
+      if (t - p.lastLandT > 0.4) { p.lastLandT = t; landed = true; this.emitSound('land', p.x, p.y, p.z, p.level, { by: p.id, source: 'player' }); }
     }
-    // objetos derrubados ao passar
-    if (speed > 0.8 && !(crouch && speed < 1.9)) {
+    // física leve dos objetos: esbarrão leve BALANÇA; forte (correndo, aterrissando, ou de novo enquanto balança) DERRUBA
+    if (!(crouch && speed < 1.9) && (speed > 0.6 || landed)) {
       for (const k of this.map.knockables) {
         if (this.knocked[k.id] || k.level !== p.level) continue;
-        if (Math.hypot(k.x - p.x, k.z - p.z) < 0.42) this.knock(k, p, 'esbarrou');
+        const d = Math.hypot(k.x - p.x, k.z - p.z);
+        if (d > (landed ? 0.8 : 0.45)) continue;
+        const wobbling = t - this.wobbleT[k.id] < 2.5;
+        if (speed > 3.3 || landed || (wobbling && t - this.wobbleT[k.id] > 0.6)) this.knock(k, p, 'esbarrou');
+        else if (!wobbling) this.wobble(k, p);
       }
     }
     return { ok: true };
   }
+  wobble(k, p) {
+    this.wobbleT[k.id] = this.t;
+    this.emit({ type: 'knock', id: k.id, by: p ? p.id : null, state: 'wobble' });
+    this.emitSound('wobble', k.x, LEVELS[k.level].y + 0.3, k.z, k.level, { by: p ? p.id : null, source: 'object' });
+  }
   knock(k, p, how) {
     this.knocked[k.id] = 1;
-    this.emit({ type: 'knock', id: k.id, by: p ? p.id : null, how });
+    this.emit({ type: 'knock', id: k.id, by: p ? p.id : null, how, state: 'fall' });
     this.emitSound('knock_' + k.kind, k.x, LEVELS[k.level].y + 0.3, k.z, k.level, { by: p ? p.id : null, source: 'object' });
   }
   // ---------- interações (validadas) ----------
@@ -149,28 +190,52 @@ export class Match {
     const kind = req && req.kind, tid = req && req.id;
     const w = this.world;
     const near = (x, z, level, maxD) => level === p.level && Math.hypot(x - p.x, z - p.z) <= maxD && w.noWallBetween(p.level, p.x, p.z, x, z);
-    if (kind === 'container' || kind === 'key') {
+    if (kind === 'container') {
       const c = this.map.containers[tid];
       if (!c) return { ok: false, msg: 'Inválido.' };
       if (!(near(c.ax, c.az, c.level, 1.9) || near(c.x, c.z, c.level, 2.0))) return { ok: false, msg: 'Muito longe.' };
-      if (kind === 'container') {
-        const open = this.containerOpen[c.id] ? 0 : 1;
-        this.containerOpen[c.id] = open;
-        const key = open && this.keyIn.has(c.id) ? this.keyIn.get(c.id) : null;
-        this.emit({ type: 'container', id: c.id, open: !!open, key, by: p.id });
-        this.emitSound('container_' + (c.kind === 'shelf' || c.kind === 'cabinet' ? 'wardrobe' : c.kind === 'drawer' ? 'drawer' : c.kind), c.x, p.y + 0.8, c.z, c.level, { by: p.id, source: 'player' });
-        return { ok: true, open: !!open, key };
-      }
-      if (!this.containerOpen[c.id]) return { ok: false, msg: 'Abra primeiro.' };
-      if (!this.keyIn.has(c.id)) return { ok: false, msg: 'Não há chave aqui.' };
-      const keyId = this.keyIn.get(c.id);
-      this.keyIn.delete(c.id);
-      this.keysCollected.push({ key: keyId, by: p.id, t: this.t });
-      p.keys++;
+      const part = Number.isInteger(req.part) ? req.part : 0;
+      if (part < 0 || part >= (c.parts || 1)) return { ok: false, msg: 'Inválido.' };
+      const cur = this.partOpen[c.id][part];
+      // estado desejado explícito (idempotente: um clique repetido não fecha de volta)
+      const open = typeof req.open === 'boolean' ? (req.open ? 1 : 0) : (cur ? 0 : 1);
+      const keys = open ? this.keysInPart(c.id, part) : [];
+      if (open === cur) return { ok: true, open: !!open, part, keys, key: keys.length ? keys[0] : null };
+      this.partOpen[c.id][part] = open;
+      this.containerOpen[c.id] = this.partOpen[c.id].some(v => v) ? 1 : 0;
+      this.emit({ type: 'container', id: c.id, part, open: !!open, keys, key: keys.length ? keys[0] : null, by: p.id });
+      this.emitSound('container_' + (c.kind === 'shelf' || c.kind === 'cabinet' ? 'wardrobe' : c.kind === 'drawer' ? 'drawer' : c.kind), c.x, p.y + 0.8, c.z, c.level, { by: p.id, source: 'player' });
+      return { ok: true, open: !!open, part, keys, key: keys.length ? keys[0] : null };
+    }
+    if (kind === 'key') {
+      // req.key = id da chave; compatível com o formato antigo { id: recipiente }
+      let k = Number.isInteger(req.key) ? this.keys[req.key] : null;
+      if (!k && Number.isInteger(tid)) k = this.keys.find(q => q.spot.type === 'part' && q.spot.c === tid && this.keyVisible(q)) || this.keys.find(q => q.spot.type === 'part' && q.spot.c === tid && q.state === 'placed');
+      if (!k) return { ok: false, msg: 'Não há chave aqui.' };
+      const pos = this.keySpotPos(k);
+      if (!(near(pos.ax, pos.az, pos.level, 1.9) || near(pos.x, pos.z, pos.level, 2.0))) return { ok: false, msg: 'Muito longe.' };
+      if (k.state !== 'placed') return { ok: false, msg: 'Não há chave aqui.' };
+      if (!this.keyVisible(k)) return { ok: false, msg: 'Abra primeiro.' };
+      k.state = 'carried'; k.by = p.id;
+      this.keysCollected.push({ key: k.id, by: p.id, t: this.t });
+      p.keys = this.carriedBy(p.id); p.keysFound = (p.keysFound || 0) + 1;
       this.director.onKey();
-      this.emit({ type: 'key', container: c.id, key: keyId, by: p.id, name: p.name, count: this.keysCollected.length, needed: this.keysNeeded });
-      this.emitSound('key_pickup', c.x, p.y + 0.8, c.z, c.level, { by: p.id, source: 'player' });
-      return { ok: true, key: keyId };
+      this.emit({ type: 'key', key: k.id, container: k.spot.type === 'part' ? k.spot.c : null, by: p.id, name: p.name, carried: p.keys, count: this.keysCollected.length, deposited: this.deposited, needed: this.keysNeeded });
+      this.emitSound('key_pickup', pos.x, p.y + 0.8, pos.z, pos.level, { by: p.id, source: 'player' });
+      return { ok: true, key: k.id, carried: p.keys };
+    }
+    if (kind === 'body') {
+      // pegar as chaves do corpo de um colega morto
+      const dead = this.players.get(tid);
+      if (!dead || dead.alive || dead === p) return { ok: false, msg: 'Inválido.' };
+      if (!near(dead.x, dead.z, dead.level, 2.2)) return { ok: false, msg: 'Muito longe.' };
+      const n = this.carriedBy(dead.id);
+      if (!n) return { ok: false, msg: 'Não há nada com ele.' };
+      for (const k of this.keys) if (k.state === 'carried' && k.by === dead.id) k.by = p.id;
+      dead.keys = 0; p.keys = this.carriedBy(p.id);
+      this.emit({ type: 'bodykeys', id: dead.id, by: p.id, name: p.name, n, carried: p.keys });
+      this.emitSound('body_search', dead.x, dead.y + 0.3, dead.z, dead.level, { by: p.id, source: 'player' });
+      return { ok: true, n, carried: p.keys };
     }
     if (kind === 'door') {
       const d = this.map.doors[tid];
@@ -181,14 +246,20 @@ export class Match {
       const fx = d.axis === 'z' ? Math.max(minX + 0.05, Math.min(maxX - 0.05, p.x)) : (p.x < d.x ? minX - 0.05 : maxX + 0.05);
       const fz = d.axis === 'z' ? (p.z < d.z ? minZ - 0.05 : maxZ + 0.05) : Math.max(minZ + 0.05, Math.min(maxZ - 0.05, p.z));
       if (!near(fx, fz, d.level, 2.2)) return { ok: false, msg: 'Muito longe.' };
-      const open = this.world.doorOpen[d.id] ? 0 : 1;
+      const cur = this.world.doorOpen[d.id];
+      // v2 (correção "abre e fecha logo"): o cliente manda o estado DESEJADO; pedido repetido não desfaz.
+      // Sem estado desejado, um repique em menos de 0,6 s é ignorado.
+      let open;
+      if (typeof req.open === 'boolean') open = req.open ? 1 : 0;
+      else { if (this.t - this.doorT[d.id] < 0.6) return { ok: true, open: !!cur, ignored: true }; open = cur ? 0 : 1; }
+      if (open === cur) return { ok: true, open: !!cur };
       if (!open) {
         // não fecha sobre alguém
         const blocked = [...this.players.values()].some(q => q.alive && !q.escaped && q.level === d.level && d.cells.some(([cx, cz]) => Math.abs((cx + 0.5) * CELL - q.x) < 0.25 + PLAYER.radius && Math.abs((cz + 0.5) * CELL - q.z) < 0.25 + PLAYER.radius))
           || (this.creature.level === d.level && d.cells.some(([cx, cz]) => Math.hypot((cx + 0.5) * CELL - this.creature.x, (cz + 0.5) * CELL - this.creature.z) < 0.9));
         if (blocked) return { ok: false, msg: 'Há algo no caminho da porta.' };
       }
-      this.world.doorOpen[d.id] = open;
+      this.world.doorOpen[d.id] = open; this.doorT[d.id] = this.t;
       this.emit({ type: 'door', id: d.id, open: !!open, by: p.id });
       this.emitSound('door_' + d.type, d.x, p.y + 1.2, d.z, d.level, { by: p.id, source: 'player', door: d.id, open: !!open });
       return { ok: true, open: !!open };
@@ -203,11 +274,19 @@ export class Match {
       const e = this.map.exit;
       if (!near(e.x, e.z + 0.5, e.level, 3.0)) return { ok: false, msg: 'Muito longe.' };
       if (this.exitOpen) return { ok: true, msg: 'A saída está aberta! Saia!' };
-      if (this.keysCollected.length < this.keysNeeded) return { ok: false, msg: `A saída está trancada. Chaves: ${this.keysCollected.length}/${this.keysNeeded}` };
-      this.exitOpen = true; this.world.exitOpen = true;
-      this.emit({ type: 'exit', open: true, by: p.id, name: p.name });
-      this.emitSound('exit_unlock', e.x, 1.2, e.z, 1, { by: p.id, source: 'player' });
-      return { ok: true };
+      // v2: deposita na porta as chaves que você carrega (qualquer jogador, em parcelas: ex. 2 + 1)
+      const n = this.carriedBy(p.id);
+      if (!n) return { ok: false, msg: `A porta está trancada: ${this.deposited}/${this.keysNeeded} chaves colocadas. Você não tem chaves.` };
+      for (const k of this.keys) if (k.state === 'carried' && k.by === p.id) k.state = 'deposited';
+      this.deposited += n; p.keys = 0; p.deposited = (p.deposited || 0) + n;
+      this.emit({ type: 'deposit', by: p.id, name: p.name, n, total: this.deposited, needed: this.keysNeeded });
+      this.emitSound('key_deposit', e.x, 1.2, e.z, 1, { by: p.id, source: 'player' });
+      if (this.deposited >= this.keysNeeded) {
+        this.exitOpen = true; this.world.exitOpen = true;
+        this.emit({ type: 'exit', open: true, by: p.id, name: p.name });
+        this.emitSound('exit_unlock', e.x, 1.2, e.z, 1, { by: p.id, source: 'player' });
+      }
+      return { ok: true, deposited: n, total: this.deposited };
     }
     return { ok: false, msg: 'Interação desconhecida.' };
   }
@@ -237,7 +316,9 @@ export class Match {
   killPlayer(p, cause) {
     if (!p.alive) return;
     p.alive = false; p.deathT = this.t;
-    this.emit({ type: 'death', id: p.id, name: p.name, cause, x: +p.x.toFixed(2), z: +p.z.toFixed(2), level: p.level });
+    // v2: as chaves ficam com o corpo (keys > 0 → os outros veem o "fantasminha" através das paredes)
+    p.keys = this.carriedBy(p.id);
+    this.emit({ type: 'death', id: p.id, name: p.name, cause, x: +p.x.toFixed(2), z: +p.z.toFixed(2), level: p.level, keys: p.keys });
     this.creatureSound('kill');
   }
   // ---------- passo de simulação ----------
@@ -276,7 +357,10 @@ export class Match {
       if (!p.alive || p.escaped || !p.connected) continue;
       if (Math.abs(p.y - c.y) > 1.6) continue;
       const d = Math.hypot(p.x - c.x, p.z - c.z);
-      if (d < CREATURE.contactDist && this.world.noWallBetween(c.level, c.x, c.z, p.x, p.z)) {
+      // v2 (justiça): o toque mata quem a criatura percebeu ou quem se mexe; um jogador PARADO que ela não
+      // percebeu não morre por ela "passar raspando" (ela para antes — ver closeCall — e muda de rumo)
+      const aware = ['chase', 'attack', 'alert', 'kill'].includes(c.state) || (c.detectT.has(p.id) && this.t - c.detectT.get(p.id) < AI.detectionMemory);
+      if (d < CREATURE.contactDist && (aware || isPlayerMoving(p, t)) && this.world.noWallBetween(c.level, c.x, c.z, p.x, p.z)) {
         this.killPlayer(p, 'contato');
         if (c.state === 'chase' || c.state === 'attack') { c.setState('kill', 1.9); c.killed = p.id; }
         this.director.onEncounterEnd('morte');
@@ -313,8 +397,8 @@ export class Match {
   stats() {
     return {
       seed: this.seed, phase: this.phase, duration: +this.t.toFixed(1),
-      keys: this.keysCollected.length, keysNeeded: this.keysNeeded,
-      players: [...this.players.values()].map(p => ({ id: p.id, name: p.name, alive: p.alive, escaped: p.escaped, keys: p.keys, left: p.left, survived: +((p.deathT ?? p.escapeT ?? this.t) - p.spawnT).toFixed(1) })),
+      keys: this.deposited, keysFound: this.keysCollected.length, keysNeeded: this.keysNeeded,
+      players: [...this.players.values()].map(p => ({ id: p.id, name: p.name, alive: p.alive, escaped: p.escaped, keys: p.keysFound || 0, left: p.left, survived: +((p.deathT ?? p.escapeT ?? this.t) - p.spawnT).toFixed(1) })),
     };
   }
   setConnected(id, on) {
@@ -334,20 +418,22 @@ export class Match {
       time: +this.t.toFixed(3),
       players: [...this.players.values()].filter(p => !p.left).map(p => ({
         id: p.id, x: +p.x.toFixed(3), y: +p.y.toFixed(3), z: +p.z.toFixed(3), level: p.level, yaw: +p.yaw.toFixed(3), pitch: +p.pitch.toFixed(3),
-        crouch: p.crouch, run: p.run, fl: p.flashlight, alive: p.alive, escaped: p.escaped, conn: p.connected, moving: isPlayerMoving(p, this.t),
+        crouch: p.crouch, run: p.run, fl: p.flashlight, alive: p.alive, escaped: p.escaped, conn: p.connected, moving: isPlayerMoving(p, this.t), k: this.carriedBy(p.id),
       })),
       creature: this.creature.snapshot(),
     };
   }
   fullState() {
-    const revealed = {};
-    for (let i = 0; i < this.containerOpen.length; i++) if (this.containerOpen[i] && this.keyIn.has(i)) revealed[i] = this.keyIn.get(i);
+    const parts = this.partOpen.map(a => Array.from(a));
     return {
       seed: this.seed, phase: this.phase, keysNeeded: this.keysNeeded, mapHash: this.map.hash,
-      doors: Array.from(this.world.doorOpen), containers: Array.from(this.containerOpen), revealed,
+      doors: Array.from(this.world.doorOpen), containers: Array.from(this.containerOpen), parts,
+      // chaves: onde estão (o cliente só mostra as visíveis: sobre mesas ou em partes abertas)
+      keys: this.keys.map(k => ({ id: k.id, spot: k.spot, state: k.state, by: k.by })),
+      deposited: this.deposited,
       keysCollected: this.keysCollected.length, knocked: Array.from(this.knocked), exitOpen: this.exitOpen,
       ended: this.ended, result: this.result, t: this.t,
-      players: [...this.players.values()].map(p => ({ id: p.id, name: p.name, alive: p.alive, escaped: p.escaped, left: p.left, conn: p.connected })),
+      players: [...this.players.values()].map(p => ({ id: p.id, name: p.name, alive: p.alive, escaped: p.escaped, left: p.left, conn: p.connected, keys: this.carriedBy(p.id), x: +p.x.toFixed(2), z: +p.z.toFixed(2), level: p.level })),
     };
   }
   diag() {
@@ -365,7 +451,7 @@ export class Match {
         maxStill: +c.maxStill.toFixed(1),
       },
       director: this.director.diag(),
-      keys: { collected: this.keysCollected.length, needed: this.keysNeeded, containers: this.keyContainers },
+      keys: { collected: this.keysCollected.length, deposited: this.deposited, needed: this.keysNeeded, containers: this.keyContainers, spots: this.keys.map(k => ({ ...this.keySpotPos(k), state: k.state, type: k.spot.type, part: k.spot.part })) },
       exitOpen: this.exitOpen,
       recentSounds: this.sounds.slice(-6).map(s => ({ type: s.type, level: s.level, range: +s.range.toFixed(1), heard: !!s.heardBy, t: +s.t.toFixed(1) })),
     };
@@ -383,7 +469,7 @@ export class Match {
       return { ok: true };
     }
     if (msg.cmd === 'release') { this.creature.pickPatrol(); return { ok: true }; }
-    if (msg.cmd === 'keys') return { ok: true, keys: this.keyContainers.map(id => { const c = this.map.containers[id]; return { id, level: c.level, ax: c.ax, az: c.az, x: c.x, z: c.z }; }) };
+    if (msg.cmd === 'keys') return { ok: true, keys: this.keys.map(k => { const q = this.keySpotPos(k); return { key: k.id, id: k.spot.type === 'part' ? k.spot.c : null, part: k.spot.part ?? null, surface: k.spot.type === 'surface' ? k.spot.s : null, state: k.state, level: q.level, ax: q.ax, az: q.az, x: q.x, z: q.z }; }) };
     return { ok: false };
   }
   debugPlaceCreature(x, z, level, yaw = 0, state = 'hold') {

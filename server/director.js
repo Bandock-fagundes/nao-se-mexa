@@ -26,6 +26,9 @@ export const DIRECTOR = {
   levelPenalty: 10,      // m equivalentes por andar de diferença
   passByMenace: 0.6,     // ameaça mínima para agendar uma "passagem" pela região dos jogadores
   passByCooldown: [40, 70],
+  // v2 "nunca some": se a criatura passar este tempo sem chegar perto (~14 m) de ninguém, o diretor manda uma
+  // passagem pela região aproximada dos jogadores mesmo com ameaça baixa (diminui com a ameaça)
+  maxGap: 85, maxGapMenaceCut: 30,
 };
 
 const clamp01 = (v) => Math.max(0, Math.min(1, v));
@@ -39,7 +42,7 @@ export class Director {
     this.override = null;          // somente testes: fixa a ameaça
     this.hint = null;              // última dica de região (com erro)
     this.target = null;            // último destino escolhido pela criatura via diretor
-    this.nextPassByT = 75;         // primeira passagem possível
+    this.nextPassByT = 60;         // primeira passagem possível
     this.passBys = 0;
     this.encounters = 0;
     this.firstEncounterT = null;
@@ -103,8 +106,13 @@ export class Director {
     const dx = Math.max(x0 - hint.x, 0, hint.x - x1), dz = Math.max(z0 - hint.z, 0, hint.z - z1);
     return Math.hypot(dx, dz) + Math.abs(room.level - hint.level) * DIRECTOR.levelPenalty;
   }
+  // tempo desde que a criatura esteve perto de alguém pela última vez
+  get gap() { const c = this.m.creature; return c ? this.m.t - (c.lastNearT || 0) : 0; }
+  gapLimit(menace = this.menace) { return DIRECTOR.maxGap - DIRECTOR.maxGapMenaceCut * clamp01(menace); }
   wantsPassBy() {
-    return this.menace >= DIRECTOR.passByMenace && this.m.t >= this.nextPassByT && !this.inRelief;
+    if (this.inRelief) return false;
+    if (this.m.t > 30 && this.gap > this.gapLimit()) return true; // nunca some por muito tempo
+    return this.menace >= DIRECTOR.passByMenace && this.m.t >= this.nextPassByT;
   }
   passByDone() {
     this.passBys++;
@@ -120,7 +128,7 @@ export class Director {
       errRadius: +this.errRadius().toFixed(1),
       target: this.target,
       nextPassByIn: +(this.nextPassByT - this.m.t).toFixed(1),
-      passBys: this.passBys, encounters: this.encounters,
+      passBys: this.passBys, encounters: this.encounters, gap: +this.gap.toFixed(1), gapLimit: +this.gapLimit().toFixed(0),
     };
   }
 }

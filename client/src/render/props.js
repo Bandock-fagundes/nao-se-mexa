@@ -27,7 +27,9 @@ export function C(g, rt, rb, h, mat, x, y, z, color, seg = 12, rx = 0, rz = 0) {
 export function S(g, r, mat, x, y, z, color, sx = 1, sy = 1, sz = 1, seg = 12) {
   const m = mesh(new THREE.SphereGeometry(r, seg, Math.max(6, seg * 0.75 | 0)), mat, color); m.position.set(x, y, z); m.scale.set(sx, sy, sz); g.add(m); return m;
 }
-const dyn = (g, o) => { o.part.userData.dynamic = true; g.userData.dyn = o; return g; };
+// dyn: parte móvel única (porta de armário, tampa de baú…). dynParts (v2): várias partes independentes (gavetas)
+const dyn = (g, o) => { o.part.userData.dynamic = true; g.userData.dyn = o; g.userData.parts = [o]; return g; };
+const dynParts = (g, list) => { for (const o of list) o.part.userData.dynamic = true; g.userData.dyn = list[0]; g.userData.parts = list; return g; };
 const knob = (g, M, x, y, z) => S(g, 0.018, M.brass, x, y, z, 0xffffff, 1, 1, 1, 8);
 
 const COLORS = { cloth: [0x5a1416, 0x1e3a2a, 0x2a2a40, 0x4a3a20, 0x3a1a2a], books: [0x5a1a14, 0x1a3a24, 0x1a2440, 0x4a3a1a, 0x2a1a10, 0x3a3a30, 0x601818, 0x203018] };
@@ -92,12 +94,22 @@ export function buildProp(kind, w, d, M, variant = 0) {
       const W = w - 0.08, H = kind === 'bcabinet' ? 1.7 : kind === 'cabinet' ? 2.0 : 2.15, Dp = Math.min(d - 0.06, 0.48);
       const body = kind === 'bcabinet' ? 0xd8d0c0 : kind === 'oldwardrobe' ? 0xa08870 : 0xffffff;
       const mat = kind === 'bcabinet' ? M.porcelain : M.darkWood;
-      B(g, W, H, Dp, mat, 0, H / 2 + 0.06, 0, body);
+      // v2: corpo OCO (fundo, laterais, teto e piso separados) — ao abrir, dá para ver o interior
+      const th = 0.035;
+      B(g, W, H, th, mat, 0, H / 2 + 0.06, -Dp / 2 + th / 2, body);                 // fundo
+      B(g, th, H, Dp, mat, -W / 2 + th / 2, H / 2 + 0.06, 0, body);                 // lateral esquerda
+      B(g, th, H, Dp, mat, W / 2 - th / 2, H / 2 + 0.06, 0, body);                  // lateral direita
+      B(g, W, th, Dp, mat, 0, H + 0.06 - th / 2, 0, body);                          // teto
+      B(g, W, th, Dp, mat, 0, 0.06 + th / 2, 0, body);                              // piso
       B(g, W + 0.08, 0.1, Dp + 0.06, mat, 0, H + 0.1, 0, body);
       B(g, W + 0.04, 0.06, Dp + 0.03, mat, 0, 0.03, 0, body);
-      // interior escuro visível ao abrir
-      B(g, W - 0.08, H - 0.12, 0.02, M.black, 0, H / 2 + 0.06, Dp / 2 - 0.02);
-      B(g, W - 0.08, 0.02, Dp - 0.06, M.darkWood, 0, H * 0.5, 0.0, 0x6a4a30);
+      // interior: forro escuro, prateleira do meio e (guarda-roupas) cabideiro com um casaco velho
+      B(g, W - 0.1, H - 0.1, 0.01, M.black, 0, H / 2 + 0.06, -Dp / 2 + th + 0.006);
+      B(g, W - 2 * th, 0.02, Dp - 0.06, M.darkWood, 0, H * 0.5, 0.0, 0x6a4a30);
+      if (kind === 'wardrobe' || kind === 'oldwardrobe') {
+        C(g, 0.012, 0.012, W - 2 * th, M.brass, 0, H * 0.86, 0, 0xffffff, 6, 0, Math.PI / 2);
+        B(g, 0.32, 0.55, 0.06, M.fabric, -W / 4, H * 0.86 - 0.32, 0, 0x2a2420);
+      }
       if (kind === 'china_cabinet') for (let i = 0; i < 4; i++) { const m = C(g, 0.11, 0.11, 0.015, M.porcelain, -W / 2 + 0.2 + i * (W - 0.4) / 3, H * 0.5 + 0.13, -0.08, 0xffffff, 16, Math.PI / 2 - 0.3); }
       const lw = W / 2;
       const left = new THREE.Group(); left.position.set(-W / 2, 0.06, Dp / 2 + 0.01); g.add(left);
@@ -123,23 +135,27 @@ export function buildProp(kind, w, d, M, variant = 0) {
       B(g, W + 0.04, 0.04, Dp + 0.04, M.wood, 0, H - 0.02, 0, 0x8a6040);
       const rows = kind === 'dresser' ? 3 : kind === 'sideboard' ? 2 : 1;
       const cols = W > 1.2 ? 2 : 1;
-      let top = null;
+      let top = null; const drawers = [];
       for (let rr = 0; rr < rows; rr++) for (let cc = 0; cc < cols; cc++) {
         const dw = W / cols - 0.06, dh = solid ? Math.min(0.2, (H - 0.2) / rows - 0.04) : 0.11;
         const y = H - 0.12 - rr * (dh + 0.05) - (solid ? 0.02 : 0);
         const x = cols === 1 ? 0 : (cc === 0 ? -W / 4 : W / 4);
         const p = new THREE.Group(); p.position.set(x, y, Dp / 2 + 0.005); g.add(p);
         B(p, dw, dh, 0.03, M.wood, 0, 0, 0, 0x6a4228); knob(p, M, 0, 0, 0.025);
-        if (rr === 0 && cc === 0) { top = p; B(p, dw - 0.04, dh - 0.03, Dp - 0.08, M.black, 0, 0, -Dp / 2 + 0.01); }
+        // v2: TODA gaveta tem fundo (caixa) e ponto de apoio para a chave — cada uma abre separada
+        B(p, dw - 0.04, dh - 0.03, Dp - 0.08, M.black, 0, 0, -Dp / 2 + 0.01);
+        const an = new THREE.Object3D(); an.position.set(0, -dh / 2 + 0.03, -0.1); p.add(an);
+        drawers.push({ part: p, type: 'drawer', amount: 0.3, anchor: an, label: (kind === 'dresser' ? 'gaveta da cômoda' : 'gaveta') + (rows * cols > 1 ? ` ${rr * cols + cc + 1}` : '') });
+        if (!top) top = p;
       }
       // decoração em cima
       if (kind === 'dresser') { B(g, 0.6, 0.75, 0.04, M.darkWood, 0, H + 0.4, -Dp / 2 + 0.05); B(g, 0.5, 0.62, 0.01, M.glass, 0, H + 0.4, -Dp / 2 + 0.08, 0x9aa0b0); }
       if (kind === 'console' || kind === 'sideboard') { C(g, 0.05, 0.07, 0.25, M.porcelain, W / 2 - 0.2, H + 0.125, 0, 0x4a5a70, 10); }
-      const anchor = new THREE.Object3D(); anchor.position.set(0, 0.0, -0.1); top.add(anchor);
-      return dyn(g, { part: top, type: 'drawer', amount: 0.3, anchor, label: kind === 'dresser' ? 'gaveta da cômoda' : 'gaveta' });
+      void top;
+      return dynParts(g, drawers);
     }
     case 'clock': {
-      B(g, 0.42, 1.6, 0.32, M.darkWood, 0, 0.8, 0); B(g, 0.5, 0.5, 0.36, M.darkWood, 0, 1.85, 0); B(g, 0.52, 0.06, 0.38, M.wood, 0, 2.13, 0);
+      B(g, 0.4, 1.6, 0.32, M.darkWood, 0, 0.8, 0); B(g, 0.44, 0.5, 0.36, M.darkWood, 0, 1.85, 0); B(g, 0.46, 0.06, 0.38, M.wood, 0, 2.13, 0); // cabe na célula de 0,5 m (relógios lado a lado não se atravessam)
       const face = mesh(new THREE.CircleGeometry(0.17, 24), M.paper, 0xd8ccaa); face.position.set(0, 1.85, 0.185); g.add(face);
       B(g, 0.01, 0.12, 0.005, M.black, 0, 1.88, 0.19); B(g, 0.08, 0.01, 0.005, M.black, 0.03, 1.85, 0.19);
       B(g, 0.26, 0.9, 0.01, M.glass, 0, 0.95, 0.165, 0x8090a0); C(g, 0.06, 0.06, 0.01, M.brass, 0, 0.7, 0.12, 0xffffff, 16, Math.PI / 2);
@@ -240,11 +256,11 @@ export function buildProp(kind, w, d, M, variant = 0) {
       return dyn(g, { part: door, type: 'door', amount: -1.7, anchor, label: kind === 'sink' ? 'armário da pia' : 'armário da cozinha' });
     }
     case 'stove': {
-      B(g, w - 0.1, 0.8, 0.6, M.iron, 0, 0.45, 0, 0x2a2a2a); B(g, w - 0.04, 0.05, 0.64, M.iron, 0, 0.87, 0, 0x1a1a1a);
+      B(g, w - 0.1, 0.8, 0.44, M.iron, 0, 0.45, 0, 0x2a2a2a); B(g, w - 0.04, 0.05, 0.48, M.iron, 0, 0.87, 0, 0x1a1a1a);
       for (const sx of [-0.2, 0.2]) C(g, 0.12, 0.12, 0.02, M.iron, sx, 0.9, 0.05, 0x111111, 16);
-      C(g, 0.08, 0.08, 1.8, M.iron, 0.3, 1.8, -0.2, 0x222222, 10);
-      B(g, 0.4, 0.3, 0.02, M.iron, -0.1, 0.4, 0.31, 0x333333); C(g, 0.13, 0.12, 0.16, M.metal, -0.2, 0.98, 0.05, 0x6a5a4a, 14);
-      for (let i = 0; i < 4; i++) S(g, 0.02, M.brass, -0.3 + i * 0.2, 0.75, 0.31);
+      C(g, 0.08, 0.08, 1.8, M.iron, 0.3, 1.8, -0.15, 0x222222, 10);
+      B(g, 0.4, 0.3, 0.02, M.iron, -0.1, 0.4, 0.23, 0x333333); C(g, 0.13, 0.12, 0.16, M.metal, -0.2, 0.98, 0.05, 0x6a5a4a, 14);
+      for (let i = 0; i < 4; i++) S(g, 0.02, M.brass, -0.3 + i * 0.2, 0.75, 0.23);
       return g;
     }
     case 'ktable': case 'reading_table': {
@@ -263,18 +279,20 @@ export function buildProp(kind, w, d, M, variant = 0) {
       const top = new THREE.Group(); top.position.z = -(d - Dp) / 2 + 0.02; g.add(top);
       B(top, W, 0.06, Dp, M.wood, 0, 0.78, 0, 0x7a5236);
       B(top, 0.45, 0.72, Dp - 0.05, M.darkWood, -W / 2 + 0.25, 0.39, 0); B(top, 0.45, 0.72, Dp - 0.05, M.darkWood, W / 2 - 0.25, 0.39, 0);
-      let first = null;
-      for (const yy of [0.2, 0.45, 0.66]) for (const xx of [-W / 2 + 0.25, W / 2 - 0.25]) {
+      const drawers = [];
+      // ordem = drawerLayout('desk'): 3 linhas (de cima para baixo) × 2 colunas
+      for (const yy of [0.66, 0.45, 0.2]) for (const xx of [-W / 2 + 0.25, W / 2 - 0.25]) {
         const p = new THREE.Group(); p.position.set(xx, yy, Dp / 2 - 0.01); top.add(p);
         B(p, 0.38, 0.17, 0.02, M.wood, 0, 0, 0, 0x6a4228); knob(p, M, 0, 0, 0.02);
-        if (!first && yy === 0.66) { first = p; B(p, 0.34, 0.13, Dp - 0.12, M.black, 0, 0, -Dp / 2 + 0.05); }
+        B(p, 0.34, 0.13, Dp - 0.12, M.black, 0, 0, -Dp / 2 + 0.05);
+        const an = new THREE.Object3D(); an.position.set(0, -0.04, -0.12); p.add(an);
+        drawers.push({ part: p, type: 'drawer', amount: 0.3, anchor: an, label: `gaveta ${drawers.length + 1} da escrivaninha` });
       }
       B(top, 0.3, 0.02, 0.22, M.paper, 0.1, 0.82, 0.05, 0xd8ccaa).rotation.y = 0.2;
       B(top, 0.22, 0.05, 0.3, M.books, -0.3, 0.835, -0.1, 0x3a1010);
       C(top, 0.03, 0.035, 0.08, M.brass, 0.4, 0.85, -0.15, 0x2a2a2a, 8);
       chair(g, M, 0, Dp / 2 - 0.05, Math.PI, cloth).position.z = top.position.z + Dp / 2 + 0.3;
-      const anchor = new THREE.Object3D(); anchor.position.set(0, 0.0, -0.12); first.add(anchor);
-      return dyn(g, { part: first, type: 'drawer', amount: 0.3, anchor, label: 'gaveta da escrivaninha' });
+      return dynParts(g, drawers);
     }
     case 'chest': {
       const W = Math.min(w - 0.15, 0.9), Dp = 0.46;
@@ -367,7 +385,7 @@ export function buildProp(kind, w, d, M, variant = 0) {
       const tk = C(g, 0.6, 0.6, 1.9, M.iron, 0, 1.0, -0.1, 0x3a3430, 20);
       C(g, 0.62, 0.62, 0.06, M.metal, 0, 0.3, -0.1, 0x5a4a3a, 20); C(g, 0.62, 0.62, 0.06, M.metal, 0, 1.7, -0.1, 0x5a4a3a, 20);
       S(g, 0.6, M.iron, 0, 1.95, -0.1, 0x3a3430, 1, 0.3, 1, 16);
-      C(g, 0.06, 0.06, 1.4, M.metal, 0.4, 2.6, -0.3, 0x6a5a4a, 8); C(g, 0.05, 0.05, 1.2, M.metal, -0.75, 1.2, 0, 0x6a5a4a, 8, 0, Math.PI / 2);
+      C(g, 0.06, 0.06, 1.4, M.metal, 0.4, 2.6, -0.3, 0x6a5a4a, 8); C(g, 0.05, 0.05, 0.5, M.metal, -0.45, 1.2, 0, 0x6a5a4a, 8, 0, Math.PI / 2);
       C(g, 0.09, 0.09, 0.03, M.brass, 0, 1.2, 0.51, 0xffffff, 16, Math.PI / 2); const gl = mesh(new THREE.CircleGeometry(0.07, 16), M.glowRed); gl.position.set(0, 1.2, 0.53); g.add(gl); gl.userData.dynamic = true;
       B(g, 0.35, 0.3, 0.05, M.iron, 0, 0.55, 0.5, 0x222222);
       return g;
@@ -376,7 +394,7 @@ export function buildProp(kind, w, d, M, variant = 0) {
       C(g, 0.02, 0.02, 1.0, M.darkWood, 0, 0.5, 0); C(g, 0.18, 0.2, 0.04, M.darkWood, 0, 0.02, 0);
       const t = mesh(new THREE.SphereGeometry(0.2, 16, 12), M.fabric, 0x8a7a68); t.scale.set(1, 1.8, 0.7); t.position.y = 1.35; g.add(t);
       S(g, 0.06, M.darkWood, 0, 1.75, 0, 0x5a4030);
-      const sh = mesh(new THREE.ConeGeometry(0.32, 0.8, 16, 1, true), M.sheet, 0x9a9488); sh.position.y = 1.0; sh.material = M.sheet; g.add(sh);
+      const sh = mesh(new THREE.ConeGeometry(0.24, 0.8, 16, 1, true), M.sheet, 0x9a9488); sh.position.y = 1.0; sh.material = M.sheet; g.add(sh);
       return g;
     }
   }
@@ -406,9 +424,9 @@ export function buildKey(M) {
   const orn = new THREE.Mesh(new THREE.TorusGeometry(0.018, 0.004, 6, 12), gm); orn.position.x = 0; g.add(orn);
   g.scale.setScalar(2.1);
   // halo aditivo discreto
-  const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d'); const gr = x.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, 'rgba(255,200,90,0.9)'); gr.addColorStop(0.4, 'rgba(255,170,60,0.3)'); gr.addColorStop(1, 'rgba(255,160,50,0)'); x.fillStyle = gr; x.fillRect(0, 0, 64, 64);
+  const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d'); const gr = x.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, 'rgba(255,255,255,0.95)'); gr.addColorStop(0.35, 'rgba(235,240,255,0.35)'); gr.addColorStop(1, 'rgba(220,230,255,0)'); // v2: brilho BRANCO x.fillStyle = gr; x.fillRect(0, 0, 64, 64);
   const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.45 }));
-  halo.scale.set(0.22, 0.22, 1); halo.position.set(0.08, 0, 0.03); g.add(halo);
+  halo.scale.set(0.26, 0.26, 1); halo.position.set(0.08, 0, 0.03); g.add(halo); g.userData.halo = halo;
   // ergue a chave acima do fundo do recipiente (o +Z local vira 'para cima' quando deitada)
   for (const c of g.children) if (c !== halo) c.position.z += 0.014;
   return g;

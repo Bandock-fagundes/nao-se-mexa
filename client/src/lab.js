@@ -27,6 +27,15 @@ if (view === 'creature') {
   for (let i = 0; i < n; i++) c.anim.update(fdt, { anim, animT: at + i * fdt, speed, headYaw: +(q.get('hy') || 0), headPitch: +(q.get('hp') || 0), yaw: 0 });
   window.__step = (k, dt2 = fdt) => { for (let i = 0; i < k; i++) c.anim.update(dt2, { anim, animT: at, speed, headYaw: 0, headPitch: 0, yaw: 0 }); renderer.render(scene, cam); };
   cam.position.set(+(q.get('cx') || 0), +(q.get('cy') || 1.7), +(q.get('cz') || 5.2)); cam.lookAt(0, +(q.get('ly') || 1.5), 0);
+  if (q.get('face')) {
+    // close no rosto: câmera à frente da cabeça (posição real do osso depois da animação)
+    c.root.updateMatrixWorld(true);
+    const hb = c.bones.find(b => b.name === 'head'); const hp = new THREE.Vector3(0, -0.08, 0.3); hb.localToWorld(hp);
+    const fw = new THREE.Vector3(0, 0, 1).applyQuaternion(hb.getWorldQuaternion(new THREE.Quaternion()));
+    const side = +(q.get('side') || 0.25);
+    cam.position.copy(hp).addScaledVector(fw, +(q.get('dist') || 0.75)).add(new THREE.Vector3(side, 0.08, 0)); cam.lookAt(hp);
+    const fl = new THREE.PointLight(0xfff0e0, 3, 4); fl.position.copy(cam.position).add(new THREE.Vector3(0.2, 0.15, 0)); scene.add(fl);
+  }
 } else if (view === 'hand') {
   scene.background = new THREE.Color(0x2a2420);
   const h = buildHand(M); cam.add(h.root); scene.add(cam); cam.position.set(0, 1.6, 2); cam.lookAt(0, 1.6, 0);

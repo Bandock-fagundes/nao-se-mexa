@@ -109,7 +109,7 @@ test('F1: a criatura investiga a última posição conhecida quando perde o alvo
   const m = makeMatch(1, SEED);
   const c = clearCorridor(m, 1, 30);
   m.debugPlaceCreature(c.x0, c.z, 1, Math.PI / 2);
-  m.debugPlacePlayer('p1', c.x0 + 14, c.z, 1);
+  m.debugPlacePlayer('p1', c.x0 + 9, c.z, 1);
   run(m, 0.8, strafe(m, 'p1'));
   assert.ok(['alert', 'chase'].includes(m.creature.state));
   const lk = { x: m.players.get('p1').x, z: m.players.get('p1').z };

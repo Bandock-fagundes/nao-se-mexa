@@ -1,12 +1,26 @@
 # NÃO SE MEXA!
 
-Jogo 3D de terror e sobrevivência, em primeira pessoa, para navegador — solo ou cooperativo com até 4 jogadores.
+Jogo 3D de terror e sobrevivência, em primeira pessoa, para navegador — solo ou cooperativo com até 3 jogadores.
 Vocês estão presos numa mansão vitoriana gerada proceduralmente. Encontrem as chaves, destranquem a saída
 no hall de entrada e fujam antes que **a criatura** toque em alguém (o toque mata na hora).
 
-- **Fase 1 — A criatura vê:** ela só percebe quem **se move** no campo de visão dela. 1 chave.
-- **Fase 2 — A criatura escuta:** passos, corrida, pulos, portas e objetos derrubados chamam a atenção dela. 2 chaves.
-- **Fase 3 — A criatura fareja:** a cada 20–30 s ela para e fareja os rastros deixados pelos jogadores. 3 chaves.
+- **Fase 1 — A criatura vê:** ela só percebe quem **se move** no campo de visão dela.
+- **Fase 2 — A criatura escuta:** barulhos chamam a atenção dela (veja os níveis de som abaixo).
+- **Fase 3 — A criatura fareja:** a cada 20–30 s ela para e fareja os rastros deixados pelos jogadores.
+
+### Novidades da v2 (BETA)
+- **3 chaves por casa**, dentro de uma gaveta/porta específica de um móvel ou **sobre mesas**; mudam de lugar a cada partida.
+  Cada gaveta abre separadamente (mire com o pontinho). A chave achada **brilha branco, piscando de leve**.
+- **Inventário:** o HUD mostra "Você tem N chave(s)". Com chave no bolso, a **porta de saída aparece através das paredes**.
+  A porta precisa de **3 chaves colocadas**, por qualquer jogador e em parcelas (ex.: 2 + 1).
+- **Níveis de som** com onda na tela: **vermelho** = a casa inteira ouve · **amarelo** = o andar todo e o de baixo ·
+  **baixo** (branco) = o cômodo e os vizinhos. Agachado = silêncio total; andar em pé = só às vezes a madeira range (ouvido de
+  perto); correr = sem rangido, mas passos ouvidos. Objetos: esbarrão leve balança, forte derruba (vidro/metal = mais alto).
+- **Criatura:** só vê quem se mexe; visto de muito longe, ela vem andando aos poucos. Ao ouvir um som longe, corre; perto,
+  desacelera, vai ao local, circula e confere os cômodos vizinhos. Nunca some por muito tempo (às vezes vai longe, às vezes
+  aparece perto "do nada", sem teleporte). Jogador parado e despercebido não morre por ela passar raspando.
+- **Máximo de 3 jogadores.** Morte de um colega não é anunciada — só quem acha o corpo fica sabendo; se ele levava chave, o
+  corpo aparece como "fantasminha" através das paredes e dá para pegar as chaves dele.
 
 ## Como rodar localmente
 
@@ -30,7 +44,7 @@ A aba de testes fica em `http://localhost:3000/testar`.
 | Shift | correr (gasta fôlego e faz mais barulho) |
 | Ctrl (segurar) / **C** (alternar) | agachar — use **C** se o navegador fechar a aba com Ctrl+W |
 | Espaço | pular |
-| E | interagir (portas, gavetas, armários, baús, caixas, prateleiras, chave, saída, derrubar objetos) |
+| E | interagir (portas, cada gaveta, armários, baús, caixas, prateleiras, chave, colocar chaves na saída, corpo com chaves, derrubar objetos) |
 | F | liga/desliga a lanterna |
 | Esc | pausa (o mundo **não** para — a criatura continua andando) |
 
@@ -78,7 +92,9 @@ concluídas, tempo sobrevivido) também ficam no `localStorage`.
 ## Testes
 
 ```bash
-npm test     # node:test — 38 testes: fases 1–3, chaves, morte, validação de movimento, 500 sementes, multiplayer com 2 clientes ws reais
+npm test     # node:test — fases 1–3, níveis de som, IA v2, chaves/gavetas/depósito, rede (3 jogadores, heartbeat, erros), 500 sementes, móveis
+node test/simulate.mjs 4 1,2,3          # partidas simuladas com robôs (1 e 3 jogadores)
+node test/simulate.mjs 3 1 frozen       # criatura congelada: confere chaves alcançáveis + saída
 npm run e2e  # navegador real (puppeteer) com 2 páginas + capturas em shots/
 ```
 

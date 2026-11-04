@@ -214,27 +214,58 @@ function buildGeometry() {
       return r;
     },
   });
-  // cavidades onde seriam olhos (vazias, úmidas)
-  for (const s of [1, -1]) { const g = new THREE.SphereGeometry(0.032, 12, 8); g.scale(0.9, 0.6, 0.5); g.translate(s * 0.1, 2.88, 0.7); maw.rigid(g, BI.head); }
+  // cavidades onde seriam olhos (vazias, úmidas) (v2 fase 2: um pouco maiores)
+  for (const s of [1, -1]) { const g = new THREE.SphereGeometry(0.036, 12, 8); g.scale(0.9, 0.6, 0.5); g.translate(s * 0.1, 2.88, 0.7); maw.rigid(g, BI.head); }
   // ----- boca vertical: interior úmido + gengivas + lábios nas mandíbulas + dentes irregulares -----
-  { const g = new THREE.SphereGeometry(0.1, 20, 14); g.scale(0.34, 1.3, 0.6); g.rotateX(-0.5); g.translate(0, 2.7, 0.79); maw.rigid(g, BI.head); }
+  { const g = new THREE.SphereGeometry(0.1, 24, 16); g.scale(0.42, 1.38, 0.62); g.rotateX(-0.5); g.translate(0, 2.7, 0.785); maw.rigid(g, BI.head); }
   { const g = new THREE.SphereGeometry(0.04, 10, 8); g.scale(0.6, 1.4, 0.6); g.translate(0, 2.68, 0.76); maw.rigid(g, BI.head); } // garganta
   for (const s of [1, -1]) {
     const jb = s > 0 ? 'jawL' : 'jawR';
     skin.tube([
-      pt(V(s * 0.05, 2.84, 0.66), 0.02, one(jb)), pt(V(s * 0.047, 2.79, 0.79), 0.036, one(jb)), pt(V(s * 0.042, 2.67, 0.865), 0.041, one(jb)), pt(V(s * 0.046, 2.56, 0.8), 0.031, one(jb)), pt(V(s * 0.05, 2.52, 0.7), 0.015, one(jb)),
-    ], { radial: 12, sub: 4, noise: 0.004 });
-    maw.tube([pt(V(s * 0.03, 2.83, 0.68), 0.012, one(jb)), pt(V(s * 0.026, 2.78, 0.8), 0.018, one(jb)), pt(V(s * 0.022, 2.67, 0.85), 0.02, one(jb)), pt(V(s * 0.026, 2.57, 0.79), 0.015, one(jb)), pt(V(s * 0.03, 2.53, 0.71), 0.01, one(jb))], { radial: 10, sub: 4, noise: 0.002 });
-    for (let i = 0; i < 13; i++) {
-      const t = i / 12;
-      const y = 2.825 - t * 0.29, z = 0.72 + Math.sin(t * Math.PI) * 0.13;
-      const h = (0.04 + 0.03 * Math.sin(t * Math.PI)) * (0.7 + 0.6 * hash3(i, s, 3));
-      const g = new THREE.ConeGeometry(0.0075 + 0.003 * hash3(i, s, 9), h, 5);
-      g.translate(0, h / 2, 0); g.rotateZ(-s * (Math.PI / 2 + (hash3(i, s, 1) - 0.5) * 0.5)); g.rotateY((hash3(i, s, 5) - 0.5) * 0.4);
-      g.translate(s * 0.024, y, z);
-      teeth.rigid(g, BI[jb]);
+      pt(V(s * 0.056, 2.84, 0.66), 0.02, one(jb)), pt(V(s * 0.056, 2.79, 0.785), 0.029, one(jb)), pt(V(s * 0.052, 2.67, 0.855), 0.032, one(jb)), pt(V(s * 0.055, 2.56, 0.795), 0.025, one(jb)), pt(V(s * 0.058, 2.52, 0.7), 0.014, one(jb)),
+    ], { radial: 14, sub: 5, noise: 0.006, extra: (a, u) => 0.004 * ridge(u * 60, 4) }); // v2 fase 2: lábios finos, repuxados e enrugados — gengiva e dentes à mostra
+    // gengiva grossa e úmida ao longo da borda interna de cada mandíbula
+    maw.tube([pt(V(s * 0.034, 2.835, 0.675), 0.013, one(jb)), pt(V(s * 0.03, 2.785, 0.795), 0.02, one(jb)), pt(V(s * 0.027, 2.67, 0.852), 0.022, one(jb)), pt(V(s * 0.03, 2.57, 0.795), 0.017, one(jb)), pt(V(s * 0.034, 2.53, 0.712), 0.011, one(jb))], { radial: 12, sub: 5, noise: 0.003 });
+    // v2 fase 2 — DENTES refeitos: antes apontavam para FORA da boca ("dente versando"). Agora nascem
+    // enterrados na gengiva e apontam para DENTRO (em direção ao meio da boca) e um pouco para a frente,
+    // levemente curvos, em duas fileiras: a de fora com presas maiores nas pontas, a de dentro com
+    // dentinhos serrilhados. Os dois lados ficam intercalados para se encaixarem quando a boca fecha.
+    const mouthAt = (t) => ({ y: 2.825 - t * 0.29, z: 0.72 + Math.sin(t * Math.PI) * 0.13 });
+    for (const row of [0, 1]) {
+      const n = row === 0 ? 14 : 18;
+      for (let i = 0; i < n; i++) {
+        const t = (i + 0.5 + (s > 0 ? 0 : 0.5)) / (n + 0.5);
+        const { y, z } = mouthAt(t);
+        const end = Math.abs(t - 0.5) * 2;              // 0 no meio da boca, 1 nas pontas
+        const rnd = hash3(i, s * 3 + row, 7);
+        // fileira de fora: presas grandes nas pontas, médios no meio; de dentro: pequenos e finos
+        const h = (row === 0 ? (0.028 + 0.04 * Math.pow(end, 1.3) + 0.016 * rnd) * (i % 3 === 1 ? 0.7 : 1) : 0.013 + 0.01 * rnd) * (t > 0.86 ? 0.6 : 1); // na ponta de baixo, menores: os dois lados não se cruzam
+        const r0 = row === 0 ? 0.006 + 0.004 * end : 0.0038;
+        const g = new THREE.ConeGeometry(r0, h, 6, 4);
+        g.translate(0, h / 2, 0);
+        // curva o dente (a ponta se inclina) para não parecer um espeto reto
+        const pp = g.attributes.position;
+        for (let k = 0; k < pp.count; k++) { const yy = pp.getY(k) / h; pp.setZ(k, pp.getZ(k) + yy * yy * h * 0.35); }
+        g.computeVertexNormals();
+        // aponta para dentro (−s em X), um pouco para a frente e, perto das pontas, para o centro da boca
+        const dir = new THREE.Vector3(-s, (0.5 - t) * 0.6 * end, 0.35 + (rnd - 0.5) * 0.2).normalize();
+        g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir));
+        // base afundada ~30% na gengiva (nada flutua nem atravessa para fora)
+        const bx = s * (row === 0 ? 0.029 : 0.033) - dir.x * h * 0.08;
+        g.translate(bx, y + (row ? 0.004 : 0), z - (row ? 0.014 : 0) - 0.004);
+        teeth.rigid(g, BI[jb]);
+      }
     }
   }
+  // língua comprida e escura, presa ao fundo da boca (aparece quando as mandíbulas abrem)
+  maw.tube([pt(V(0, 2.69, 0.74), 0.022, one('head'), 1.4, 0.6), pt(V(0, 2.665, 0.79), 0.019, one('head'), 1.5, 0.55), pt(V(0, 2.635, 0.835), 0.014, one('head'), 1.4, 0.5), pt(V(0, 2.62, 0.86), 0.006, one('head'))], { radial: 10, sub: 4, noise: 0.002 });
+  for (let i = 0; i < 7; i++) {
+    const t = (i + 0.5) / 7, y = 2.8 - t * 0.2, z = 0.75 + Math.sin(t * Math.PI) * 0.07, h = 0.018 + 0.012 * hash3(i, 2, 2);
+    const g = new THREE.ConeGeometry(0.004, h, 5); g.translate(0, -h / 2, 0); g.rotateX(0.5); g.translate(0, y, z + 0.012); teeth.rigid(g, BI.head);
+  }
+  // céu da boca com sulcos (palato) e fendas nasais acima da boca
+  for (let i = 0; i < 6; i++) { const g = new THREE.TorusGeometry(0.03, 0.0035, 5, 10, Math.PI); g.rotateY(Math.PI / 2); g.rotateX(-0.5); g.translate(0, 2.74 - i * 0.02, 0.765 + i * 0.006); maw.rigid(g, BI.head); }
+  for (const s of [1, -1]) { const g = new THREE.SphereGeometry(0.011, 8, 6); g.scale(0.5, 1.8, 0.6); g.rotateZ(s * 0.3); g.translate(s * 0.022, 2.87, 0.83); maw.rigid(g, BI.head); }
   // espinhos ósseos nas costas (cristas da coluna)
   for (let i = 0; i < 9; i++) {
     const t = i / 8; const y = 1.9 + t * 0.66, z = -0.12 + t * 0.42;
@@ -337,7 +368,7 @@ export function buildCreature(M) {
   const skinMat = makeSkinMaterial(M);
   const clawMat = new THREE.MeshStandardMaterial({ color: 0x0e0b09, roughness: 0.42, metalness: 0.0 });
   const mawMat = new THREE.MeshPhysicalMaterial({ color: 0x1c0507, roughness: 0.18, metalness: 0.0, clearcoat: 0.6, clearcoatRoughness: 0.15 });
-  const toothMat = new THREE.MeshStandardMaterial({ color: 0xb8a984, roughness: 0.45 });
+  const toothMat = new THREE.MeshPhysicalMaterial({ color: 0xc9b98e, roughness: 0.38, clearcoat: 0.5, clearcoatRoughness: 0.3 }); // marfim amarelado, úmido
   const mesh = new THREE.SkinnedMesh(geo, [skinMat, clawMat, mawMat, toothMat]);
   mesh.add(bones[0]);
   mesh.bind(new THREE.Skeleton(bones));
@@ -567,7 +598,7 @@ export class CreatureAnimator {
     // ---------- dedos: curvatura orgânica em onda ----------
     let curl = 0.42 + rf * 0.3 + inv * 0.1;
     // ---------- mandíbula ----------
-    let jaw = rf * 0.22 + rf * 0.08 * Math.abs(Math.sin(this.brPh * 0.5));
+    let jaw = 0.06 + 0.025 * Math.sin(this.brPh) + rf * 0.22 + rf * 0.08 * Math.abs(Math.sin(this.brPh * 0.5)); // v2 fase 2: boca sempre entreaberta, respirando — os dentes aparecem
     this.jawEvT -= dt;
     if (this.jawEvT <= 0) { this.jawEvT = 3 + hash3(t, 2, 9) * 6; this.jawEv = 1; }
     this.jawEv = Math.max(0, this.jawEv - dt * 0.9);

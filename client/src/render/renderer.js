@@ -29,8 +29,8 @@ export class Renderer {
     this.camera = new THREE.PerspectiveCamera(settings.fov || 72, 1, 0.04, 120);
     this.scene.add(this.camera);
     this.handScene = new THREE.Scene();
-    this.hemi = new THREE.HemisphereLight(0x4a5674, 0x1a130c, 0.7); this.scene.add(this.hemi);
-    this.amb = new THREE.AmbientLight(0x22262f, 0.3); this.scene.add(this.amb);
+    this.hemi = new THREE.HemisphereLight(0x4a5674, 0x1a130c, 0.5); this.scene.add(this.hemi); // v2: mais escuro (antes 0.7)
+    this.amb = new THREE.AmbientLight(0x22262f, 0.22); this.scene.add(this.amb);
     // luzes da cena da mão
     this.handHemi = new THREE.HemisphereLight(0x8090b0, 0x2a1c14, 0.9); this.handScene.add(this.handHemi);
     this.handKey = new THREE.DirectionalLight(0xffd8b0, 0.6); this.handKey.position.set(0.5, 1, 0.6); this.handScene.add(this.handKey);

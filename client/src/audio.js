@@ -150,6 +150,9 @@ export class AudioEngine {
       case 'container_chest': this.creak(t, d, 0.35 * v, 0.5, 0.8); this.noise(this.brown, t + 0.45, 0.2, d, { type: 'lowpass', f: 350, gain: 0.7 * v }); break;
       case 'container_crate': this.noise(this.white, t, 0.12, d, { f: 1200, q: 2, gain: 0.35 * v }); this.noise(this.brown, t + 0.2, 0.2, d, { type: 'lowpass', f: 400, gain: 0.6 * v }); break;
       case 'key_pickup': for (let i = 0; i < 5; i++) { this.tone(t + i * 0.035, 0.35, d, { f: 2400 + r() * 1800, gain: 0.12 * v, type: 'sine' }); this.tone(t + i * 0.035, 0.25, d, { f: 5200 + r() * 1500, gain: 0.05 * v }); } break;
+      case 'key_deposit': for (let i = 0; i < 2; i++) { this.noise(this.white, t + i * 0.18, 0.05, d, { f: 2200, q: 3, gain: 0.5 * v }); this.tone(t + i * 0.18, 0.25, d, { f: 900 + i * 300, f2: 500, gain: 0.2 * v }); } this.tone(t + 0.4, 0.3, d, { f: 140, f2: 80, gain: 0.4 * v }); break;
+      case 'wobble': for (let i = 0; i < 4; i++) this.noise(this.white, t + i * 0.09, 0.03, d, { f: 1800 + r() * 900, q: 3, gain: (0.22 - i * 0.04) * v }); break;
+      case 'body_search': this.noise(this.pink, t, 0.5, d, { f: 1400, q: 0.7, gain: 0.25 * v, a: 0.05 }); break;
       case 'knock_vase': this.noise(this.white, t, 0.4, d, { type: 'highpass', f: 2500, gain: 0.9 * v }); for (let i = 0; i < 8; i++) this.tone(t + r() * 0.3, 0.12, d, { f: 3000 + r() * 4000, gain: 0.15 * v }); this.noise(this.brown, t, 0.15, d, { type: 'lowpass', f: 300, gain: 0.5 * v }); break;
       case 'knock_bottles': for (let i = 0; i < 6; i++) { const tt = t + i * (0.06 + r() * 0.1); this.tone(tt, 0.3, d, { f: 1200 + r() * 1400, gain: 0.25 * v }); this.noise(this.white, tt, 0.03, d, { f: 3000, gain: 0.3 * v }); } break;
       case 'knock_candelabrum': case 'knock_bucket': {

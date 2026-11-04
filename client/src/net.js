@@ -31,6 +31,8 @@ export class Net {
       ws.onclose = () => { clearTimeout(to); if (this.ws === ws) this.onClosed(); reject(new Error('closed')); };
     });
     if (!this.pingTimer) this.pingTimer = setInterval(() => this.heartbeat(), 2000);
+    // v2: keepalive HTTP leve a cada 4 min enquanto estiver numa sala (o Render grátis dorme sem tráfego de entrada)
+    if (!this.kaTimer) this.kaTimer = setInterval(() => { if (this.session && this.state === 'open') fetch('/health', { cache: 'no-store' }).catch(() => { }); }, 4 * 60 * 1000);
     return this.openPromise;
   }
   heartbeat() {
@@ -41,7 +43,7 @@ export class Net {
     if (starved) { this.lastPong = now; return; }
     if (this.ws && this.ws.readyState === 1) {
       this.ws.send(JSON.stringify({ t: 'ping', c: now }));
-      if (now - this.lastPong > 12000) { try { this.ws.close(); } catch { } }
+      if (now - this.lastPong > 20000) { try { this.ws.close(); } catch { } } // v2: 12 s → 20 s (máquinas lentas)
     }
   }
   send(m) {
@@ -58,14 +60,16 @@ export class Net {
     this.reconnecting = true;
     this.emit('reconnecting', {});
     const start = performance.now();
-    while (performance.now() - start < 30000) {
+    // v2: tenta voltar por até 100 s (o servidor guarda a vaga por 2 min)
+    let wait = 1000;
+    while (performance.now() - start < 100000) {
       try {
         await this.connect();
         this.ws.send(JSON.stringify({ t: 'resume', code: this.session.code, token: this.session.token }));
         this.reconnecting = false;
         this.emit('reconnected', {});
         return;
-      } catch { await new Promise(r => setTimeout(r, 1500)); }
+      } catch { await new Promise(r => setTimeout(r, wait)); wait = Math.min(5000, wait * 1.5); }
     }
     this.reconnecting = false;
     this.session = null;

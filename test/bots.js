@@ -21,27 +21,33 @@ export class Bot {
     const d = Math.hypot(c.x - p.x, c.z - p.z);
     return d < 20 && this.m.world.lineOfSight(p.level, p.x, p.z, c.x, c.z);
   }
+  // v2: as chaves podem estar dentro de móveis (cada gaveta/porta) ou sobre mesas; o robô não sabe onde.
   pickGoal() {
     const m = this.m, p = this.p;
-    if (m.keysCollected.length >= m.keysNeeded) {
-      const e = m.map.exit;
-      return { x: e.x, z: e.z + 1.2, level: e.level, kind: 'exit' };
-    }
+    const e = m.map.exit;
+    // colega morto com chaves (o "fantasminha" é visível através das paredes) → vai buscar
+    const body = [...m.players.values()].find(q => !q.alive && m.carriedBy(q.id) > 0);
+    if (body) return { x: body.x, z: body.z, level: body.level, kind: 'body', id: body.id };
+    const placed = m.keys.filter(k => k.state === 'placed').length;
+    if (m.exitOpen || placed === 0) return { x: e.x, z: e.z + 1.2, level: e.level, kind: 'exit' };
     let best = null, bd = Infinity;
-    for (const c of m.map.containers) {
-      if (this.tried.has(c.id) || this.blacklist.has(c.id)) continue;
-      const d = Math.hypot(c.ax - p.x, c.az - p.z) + Math.abs(c.level - p.level) * 14;
-      if (d < bd) { bd = d; best = c; }
-    }
+    const consider = (o, kind) => {
+      const key = kind + o.id;
+      if (this.tried.has(key) || this.blacklist.has(key)) return;
+      const d = Math.hypot(o.ax - p.x, o.az - p.z) + Math.abs(o.level - p.level) * 14;
+      if (d < bd) { bd = d; best = { x: o.ax, z: o.az, level: o.level, kind, id: o.id }; }
+    };
+    for (const c of m.map.containers) consider(c, 'container');
+    for (const sf of m.map.surfaces) consider(sf, 'surface');
     if (!best) { this.tried.clear(); return this.pickGoal(); }
-    return { x: best.ax, z: best.az, level: best.level, kind: 'container', id: best.id };
+    return best;
   }
   plan(goal) {
     const p = this.p;
     this.goal = goal;
     this.path = this.m.nav.findPath(p.level, p.x, p.z, goal.level, goal.x, goal.z);
     this.pi = 0;
-    if (!this.path) { if (goal.kind === 'container') this.blacklist.add(goal.id); this.goal = null; }
+    if (!this.path) { if (goal.kind === 'container' || goal.kind === 'surface') this.blacklist.add(goal.kind + goal.id); this.goal = null; }
   }
   step(dt) {
     const m = this.m, p = this.p, c = m.creature, t = m.t;
@@ -53,6 +59,8 @@ export class Bot {
     // cuidadoso: ao OUVIR a criatura por perto (passos dela), agacha e apaga a lanterna
     const cd = Math.hypot(c.x - p.x, c.z - p.z) + Math.abs(c.level - p.level) * 6;
     if (this.style === 'careful' && cd < 14) { crouch = true; fl = false; speed = PLAYER.crouch; }
+    // cuidadoso (v2): passos pesados MUITO perto (< 9 m) → congela e espera ela passar, como um jogador faria
+    if (this.style === 'careful' && cd < 9 && this.mode === 'seek' && c.state !== 'chase') { this.mode = 'freeze'; this.freezeUntil = t + 3; }
     if (sees) this.lastSeenT = t;
     const hunted = (c.state === 'chase' || c.state === 'alert' || c.state === 'attack') && c.target === this.id;
     if (this.style === 'careful') {
@@ -73,13 +81,15 @@ export class Bot {
       if (this.mode === 'freeze') {
         fl = false;
         const dc = Math.hypot(c.x - p.x, c.z - p.z);
-        if (dc < 3.6 && c.level === p.level) {
+        // só se esgueira se ela estiver de costas (senão o movimento seria visto) — de frente, fica imóvel
+        const facing = Math.abs(Math.atan2(Math.sin(Math.atan2(p.x - c.x, p.z - c.z) - c.yaw), Math.cos(Math.atan2(p.x - c.x, p.z - c.z) - c.yaw))) < 1.9;
+        if (dc < 3.6 && c.level === p.level && !facing) {
           // a criatura vai esbarrar: esgueira-se agachado para longe dela
           const ax = (p.x - c.x) / (dc || 1), az = (p.z - c.z) / (dc || 1);
           const r = m.world.move(p.level, p.x, p.z, ax * PLAYER.crouch * dt, az * PLAYER.crouch * dt, PLAYER.radius);
           this.input(r.x, r.z, false, false, true); return;
         }
-        if (t < this.freezeUntil || (sees && dc < 16)) { this.input(p.x, p.z, fl, false, true); return; }
+        if (t < this.freezeUntil || (sees && dc < 16) || (dc < 6 && c.level === p.level)) { this.input(p.x, p.z, fl, false, true); return; }
         this.mode = 'seek';
       }
     }
@@ -108,13 +118,24 @@ export class Bot {
     const cont = g.kind === 'container' ? m.map.containers[g.id] : null;
     if (cont && p.level === g.level && (dGoal < 2.3 || Math.hypot(cont.x - p.x, cont.z - p.z) < 2.1) && t - (this.lastTryT || 0) > 0.3) {
       this.lastTryT = t;
-      const r = m.interact(this.id, { kind: 'container', id: g.id });
-      if (r.ok && r.key !== null && r.key !== undefined) m.interact(this.id, { kind: 'key', id: g.id });
-      if (r.ok || dGoal < 0.6) { this.tried.add(g.id); this.goal = null; this.input(p.x, p.z, fl, false); return; }
+      // abre cada gaveta/porta do móvel e pega o que achar
+      let ok = false;
+      for (let part = 0; part < cont.parts; part++) {
+        const r = m.interact(this.id, { kind: 'container', id: g.id, part, open: true });
+        if (r.ok) { ok = true; for (const k of r.keys || []) m.interact(this.id, { kind: 'key', key: k }); }
+      }
+      if (ok || dGoal < 0.6) { this.tried.add('container' + g.id); this.goal = null; this.input(p.x, p.z, fl, false); return; }
+    }
+    if (g.kind === 'surface' && p.level === g.level && dGoal < 1.2) {
+      for (const k of m.keys) if (k.state === 'placed' && k.spot.type === 'surface' && k.spot.s === g.id) m.interact(this.id, { kind: 'key', key: k.id });
+      this.tried.add('surface' + g.id); this.goal = null; this.input(p.x, p.z, fl, false); return;
+    }
+    if (g.kind === 'body' && p.level === g.level && dGoal < 1.6) {
+      m.interact(this.id, { kind: 'body', id: g.id }); this.goal = null; this.input(p.x, p.z, fl, false); return;
     }
     if (this.unstick && t < this.unstick.until) { tx = p.x + this.unstick.dx; tz = p.z + this.unstick.dz; }
     if (g.kind === 'exit' && p.level === g.level && dGoal < 1.5) {
-      if (!m.exitOpen) m.interact(this.id, { kind: 'exit' });
+      if (!m.exitOpen && m.carriedBy(this.id) > 0) m.interact(this.id, { kind: 'exit' });
       if (m.exitOpen) { tx = m.map.exit.x; tz = 0.1; }
     }
     if (g.kind === 'flee' && this.pi >= (this.path ? this.path.length : 0)) { if (hunted) this.mode = 'seek'; else { this.mode = 'freeze'; this.freezeUntil = t + 5; } this.goal = null; }
@@ -133,7 +154,7 @@ export class Bot {
     if (this.progT > 1.5) {
       if (Math.hypot(p.x - this.progRef.x, p.z - this.progRef.z) < 0.4) {
         this.stuckN = (this.stuckN || 0) + 1;
-        if (this.goal && this.goal.kind === 'container' && this.stuckN >= 2) this.tried.add(this.goal.id);
+        if (this.goal && (this.goal.kind === 'container' || this.goal.kind === 'surface') && this.stuckN >= 2) this.tried.add(this.goal.kind + this.goal.id);
         this.goal = null;
         const a = Math.random() * Math.PI * 2; this.unstick = { until: t + 0.8, dx: Math.cos(a), dz: Math.sin(a) };
       } else this.stuckN = 0;
@@ -148,29 +169,31 @@ export class Bot {
 }
 
 // Partida completa simulada. Retorna estatísticas.
-export function simulateMatch({ seed, phase = 1, styles = ['careful'], maxTime = 900 }) {
+export function simulateMatch({ seed, phase = 1, styles = ['careful'], maxTime = 900, keySeed = 'sim', frozen = false }) {
   const players = styles.map((s, i) => ({ id: 'p' + (i + 1), name: 'Bot' + (i + 1) }));
-  const m = new Match({ seed, phase, players });
+  const m = new Match({ seed, phase, players, keySeed });
   const bots = styles.map((s, i) => new Bot(m, 'p' + (i + 1), s));
   const dt = 0.05;
   let menaceSum = 0, n = 0, maxStill = 0;
   const states = {};
   let chases = 0, prevState = '';
+  if (frozen) m.debugPlaceCreature(-60, -60, 0, 0, 'freeze'); // fora da casa: só testa chaves alcançáveis + saída
+  let error = null;
   while (!m.ended && m.t < maxTime) {
-    for (const b of bots) b.step(dt);
-    m.tick(dt);
+    try { for (const b of bots) b.step(dt); m.tick(dt); } catch (e) { error = e.stack; break; }
     if (m.creature.state === 'chase' && prevState !== 'chase' && prevState !== 'attack') chases++;
     prevState = m.creature.state;
     menaceSum += m.director.menace; n++;
     states[m.creature.state] = (states[m.creature.state] || 0) + dt;
     if (m.t > 8) maxStill = Math.max(maxStill, m.creature.stillT);
+    m.maxGapSeen = Math.max(m.maxGapSeen || 0, m.director.gap);
   }
   const ps = [...m.players.values()];
   return {
-    seed, phase, styles: styles.join('+'), duration: +m.t.toFixed(1), result: m.result || 'timeout',
+    seed, phase, styles: styles.join('+'), error, duration: +m.t.toFixed(1), result: m.result || 'timeout',
     firstEncounter: m.director.firstEncounterT, encounters: m.director.encounters, passBys: m.director.passBys,
     chases, kills: ps.filter(p => !p.alive).length, escaped: ps.filter(p => p.escaped).length, players: ps.length,
-    keys: m.keysCollected.length, keysNeeded: m.keysNeeded, avgMenace: +(menaceSum / n).toFixed(2), maxStill: +maxStill.toFixed(1),
+    keys: m.keysCollected.length, deposited: m.deposited, keysNeeded: m.keysNeeded, maxGap: +(m.maxGapSeen || 0).toFixed(0), avgMenace: +(menaceSum / n).toFixed(2), maxStill: +maxStill.toFixed(1),
     states: Object.fromEntries(Object.entries(states).map(([k, v]) => [k, +v.toFixed(0)])),
   };
 }

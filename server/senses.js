@@ -1,6 +1,7 @@
 // Sentidos da criatura: visão, audição, olfato. Nenhuma função aqui devolve a posição exata
 // de um jogador que não foi percebido por um sentido ativo.
 import { AI, CREATURE, SOUND_TYPES, SURFACE_MUL, LEVELS } from '../shared/config.js';
+import { soundReaches } from '../shared/sound.js';
 
 const DEG = Math.PI / 180;
 export const angleDiff = (a, b) => { let d = a - b; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return d; };
@@ -56,19 +57,15 @@ export function visionCheck(match, c, p, { focused = false } = {}) {
   return res;
 }
 
-// Audição: o evento sonoro é percebido? Retorna { heard, loudness, effRange, dist }
+// Audição (v2): níveis discretos — VERMELHO (casa inteira), AMARELO (mesmo andar ou o de baixo),
+// BAIXO (mesmo cômodo / cômodo vizinho; alguns também logo abaixo). Retorna { heard, loudness, dist, why }.
+// A criatura recebe só o fato de ter ouvido + a origem; quem chama aplica um erro de posição.
+const LOUD = { red: 1, yellow: 0.7, low: 0.4 };
 export function hearingCheck(match, c, ev) {
-  const w = match.world;
   const dist = Math.hypot(ev.x - c.x, (ev.y || 0) - c.y, ev.z - c.z);
-  let att = 1;
-  const L = ev.level === c.level ? c.level : ev.level;
-  const o = w.soundAttenuation(L, ev.x, ev.z, c.x, c.z);
-  att *= Math.pow(AI.wallAtten, o.walls) * Math.pow(AI.doorAtten, o.doors) * Math.pow(AI.tallAtten, Math.min(3, o.talls));
-  const lvlDiff = Math.abs(ev.level - c.level);
-  att *= Math.pow(AI.levelAtten, lvlDiff);
-  const effRange = ev.range * att;
-  const heard = dist <= effRange * AI.hearingThreshold;
-  return { heard, loudness: heard ? 1 - dist / effRange : 0, effRange, dist, walls: o.walls, doors: o.doors };
+  const r = soundReaches(match.map, ev, { level: c.level, x: c.x, z: c.z });
+  const base = LOUD[ev.lvl] || 0;
+  return { heard: r.heard, loudness: r.heard ? Math.max(0.05, base * (1 - Math.min(0.8, dist / 60))) : 0, effRange: r.heard ? Infinity : 0, dist, why: r.why };
 }
 
 export function makeSoundEvent(match, type, x, y, z, level, extra = {}) {
@@ -79,5 +76,5 @@ export function makeSoundEvent(match, type, x, y, z, level, extra = {}) {
     const m = SURFACE_MUL[surf] ?? 1;
     range *= m; intensity *= m;
   }
-  return { id: ++match.soundSeq, type, x, y, z, level, range, intensity, duration: st.duration, t: match.t, ...extra };
+  return { id: ++match.soundSeq, type, x, y, z, level, range, intensity, duration: st.duration, lvl: st.lvl ?? null, below: !!st.below, t: match.t, ...extra };
 }

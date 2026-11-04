@@ -191,8 +191,10 @@ net.on('diag', (m) => { app.lastDiag = m; });
 net.on('tolobby', () => { stopGame(); show('lobby'); renderLobby(); });
 net.on('reconnecting', () => { if (app.game || app.screen === 'lobby') overlay('reconnecting', true); });
 net.on('reconnected', () => { overlay('reconnecting', false); toast('Reconectado!', 'info'); });
-net.on('resume_fail', (m) => { overlay('reconnecting', false); sessionStorage.removeItem('nsm_session'); if (app.game || app.screen === 'lobby') { overlay('disconnected', true); } });
+net.on('resume_fail', (m) => { overlay('reconnecting', false); sessionStorage.removeItem('nsm_session'); if (app.game || app.screen === 'lobby') { const el = document.getElementById('dcMsg'); if (el) el.textContent = app.serverRestart ? 'O servidor do jogo foi reiniciado (atualização) e a partida foi perdida. Crie uma nova sala.' : 'A conexão caiu e a sala não existe mais no servidor (ele pode ter reiniciado). Crie uma nova sala.'; overlay('disconnected', true); } });
 net.on('fatal', () => { overlay('reconnecting', false); overlay('disconnected', true); app.input.unlock(); });
+// v2: o servidor avisou que vai reiniciar (atualização/deploy) — explica em vez de "caiu do nada"
+net.on('server_restart', (m) => { app.serverRestart = true; const el = document.getElementById('dcMsg'); if (el) el.textContent = m.msg || 'O servidor foi reiniciado.'; });
 $('#btnDcMenu').addEventListener('click', () => { location.href = isTest ? '/testar' : '/'; });
 
 // ---------------- partida ----------------
@@ -314,11 +316,12 @@ app.ui = {
   setPrompt(t) { const el = $('#prompt'); if (hudCache.prompt !== t) { hudCache.prompt = t; el.textContent = t; el.classList.toggle('on', !!t); } },
   updateHud(g) {
     setText('#hPhase', PHASES[g.phase].title);
-    setText('#hKeys', `Chaves encontradas: ${g.keys}/${g.keysNeeded}`);
+    const nk = g.myKeys || 0;
+    setText('#hKeys', `${nk ? `Você tem ${nk} chave${nk > 1 ? 's' : ''}` : 'Você não tem chaves'}<br><span class="door">Porta de saída: ${g.deposited}/${g.keysNeeded} chaves colocadas</span>`);
     let obj;
     if (g.exitOpen) obj = 'Objetivo: escape pela porta principal do hall!';
-    else if (g.keys >= g.keysNeeded) obj = 'Objetivo: destranque a saída no hall de entrada.';
-    else obj = `Objetivo: encontre a ${g.keysNeeded === 1 ? 'chave' : ORD(g.keys) + ' chave'} e escape.`;
+    else if (nk > 0) obj = 'Objetivo: leve as chaves até a porta de saída (ela aparece através das paredes).';
+    else obj = `Objetivo: ache as ${g.keysNeeded} chaves (gavetas, armários, sobre mesas) e coloque na porta.`;
     if (!g.p.alive) obj = 'Você foi encontrado — observando os sobreviventes.';
     else if (g.p.escaped) obj = 'Você escapou — aguardando os colegas.';
     setText('#hObj', obj);
@@ -327,7 +330,9 @@ app.ui = {
     const rows = (snapP.length ? snapP : meta).map(sp => {
       const mt = g.playersMeta.get(sp.id) || {};
       const alive = sp.alive ?? mt.alive, escd = sp.escaped ?? mt.escaped, conn = sp.conn ?? mt.conn ?? true;
-      const st = escd ? '<span class="esc">escapou</span>' : !alive ? '<span class="dead">morto</span>' : !conn ? '<span class="dc">desconectado</span>' : 'vivo';
+      // v2: ninguém é avisado da morte de um colega — só quem achou o corpo (ou o próprio morto) sabe
+      const known = sp.id === app.myId || (g.foundBodies && g.foundBodies.has(sp.id)) || !g.p.alive || g.ended;
+      const st = escd ? '<span class="esc">escapou</span>' : (!alive && known) ? '<span class="dead">morto</span>' : !conn ? '<span class="dc">desconectado</span>' : (sp.id === app.myId ? 'vivo' : '…');
       return `<li>${esc(g.name(sp.id))} — ${st}</li>`;
     });
     setText('#hPlayers', rows.join(''));
@@ -378,14 +383,14 @@ function renderDiag() {
     lines.push(`Farejamento: ${c.sniff.state}${c.sniff.nextIn !== null ? ` · próximo em ${c.sniff.nextIn}s` : ''} · rastros ativos: ${c.scentCells}`);
     lines.push(`Rastreando jogador: ${c.tracking.length ? 'sim' : 'não'}`);
   }
-  if (d) { lines.push(`Chaves: ${d.keys.collected}/${d.keys.needed} · Saída: ${d.exitOpen ? 'ABERTA' : 'trancada'}`); lines.push('Sons recentes: ' + d.recentSounds.map(s => `${s.type}${s.heard ? '*' : ''}`).join(', ')); }
+  if (d) { lines.push(`Chaves: achadas ${d.keys.collected} · na porta ${d.keys.deposited}/${d.keys.needed} · Saída: ${d.exitOpen ? 'ABERTA' : 'trancada'}`); lines.push('Sons recentes: ' + d.recentSounds.map(s => `${s.type}${s.heard ? '*' : ''}`).join(', ')); }
   $('#diagText').textContent = lines.join('\n');
   // minimapa (apenas no diagnóstico)
   const cv = $('#diagMap'), gg = cv.getContext('2d'), L = g.p.level, m = g.map;
   const s = Math.min(cv.width / W, cv.height / D);
   gg.fillStyle = '#000'; gg.fillRect(0, 0, cv.width, cv.height);
   for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) { const t = m.levels[L].grid[z * W + x]; if (t === T.VOID) continue; gg.fillStyle = t === T.WALL ? '#7a6a50' : t === T.DOOR ? (g.world.doorOpen[m.levels[L].door[z * W + x]] ? '#406020' : '#c86a30') : t === T.STAIR ? '#3a6aa8' : t === T.TALL || t === T.LOW ? '#3a2e24' : '#1e1a18'; gg.fillRect(x * s, (D - 1 - z) * s, s, s); }
-  if (d) for (const cid of d.keys.containers) { const ct = m.containers[cid]; if (ct.level === L) { gg.fillStyle = '#ffd040'; gg.fillRect(ct.access[0] * s - 1, (D - 1 - ct.access[1]) * s - 1, 3, 3); } }
+  if (d && d.keys.spots) for (const k of d.keys.spots) { if (k.level === L && k.state === 'placed') { gg.fillStyle = '#ffd040'; gg.fillRect(k.ax / CELL * s - 1, (D - k.az / CELL) * s - 1, 3, 3); } }
   gg.fillStyle = '#40e0ff'; gg.beginPath(); gg.arc(g.p.x / CELL * s, (D - g.p.z / CELL) * s, 2.5, 0, 7); gg.fill();
   for (const mt of g.mates.values()) { gg.fillStyle = '#80ff80'; gg.fillRect(mt.rx / CELL * s - 1, (D - mt.rz / CELL) * s - 1, 3, 3); }
   if (c && c.level === L) { gg.fillStyle = '#ff2020'; gg.beginPath(); gg.arc(c.x / CELL * s, (D - c.z / CELL) * s, 3.5, 0, 7); gg.fill(); }

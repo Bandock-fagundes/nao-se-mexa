@@ -9,6 +9,21 @@ import { buildCreature } from './render/creature.js';
 import { buildHand, HandAnimator } from './render/hand.js';
 import { buildTeammate, animateTeammate } from './render/human.js';
 import { makeBeamCone } from './render/renderer.js';
+import { buildKey } from './render/props.js';
+import { LEVEL_INFO } from '../../shared/sound.js';
+
+// v2: marcadores vistos ATRAVÉS das paredes (sem teste de profundidade): porta de saída e "fantasminha"
+function xrayMat(color, opacity = 0.8) { return new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthTest: false, depthWrite: false }); }
+function ghostTexture() {
+  const c = document.createElement('canvas'); c.width = 64; c.height = 80; const x = c.getContext('2d');
+  const g = x.createRadialGradient(32, 30, 4, 32, 36, 38); g.addColorStop(0, 'rgba(235,245,255,0.95)'); g.addColorStop(1, 'rgba(160,190,255,0)');
+  x.fillStyle = g; x.beginPath(); x.moveTo(8, 72); x.lineTo(8, 32); x.arc(32, 32, 24, Math.PI, 0); x.lineTo(56, 72);
+  for (let i = 0; i < 4; i++) x.quadraticCurveTo(50 - i * 12, 62, 44 - i * 12, 72); x.closePath(); x.fill();
+  x.fillStyle = 'rgba(20,24,40,0.9)'; x.beginPath(); x.arc(24, 32, 4, 0, 7); x.arc(40, 32, 4, 0, 7); x.fill();
+  // chave pequena no "colo" do fantasma
+  x.strokeStyle = 'rgba(255,255,255,1)'; x.lineWidth = 2.5; x.beginPath(); x.arc(26, 52, 4, 0, 7); x.moveTo(30, 52); x.lineTo(42, 52); x.moveTo(38, 52); x.lineTo(38, 56); x.stroke();
+  return new THREE.CanvasTexture(c);
+}
 
 const lerpA = (a, b, t) => { let d = b - a; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; return a + d * t; };
 const ORD = ['primeira', 'segunda', 'terceira'];
@@ -48,7 +63,9 @@ export class Game {
     // estado
     const you = msg.you || { x: this.map.spawns[0].x, z: this.map.spawns[0].z, level: 1, yaw: Math.PI, alive: true, escaped: false };
     this.p = { x: you.x, z: you.z, level: you.level, y: LEVELS[you.level].y, yaw: you.yaw, pitch: 0, vx: 0, vz: 0, crouchK: 0, jumpY: 0, vy: 0, grounded: true, stamina: PLAYER.staminaMax, exhausted: false, alive: you.alive !== false, escaped: !!you.escaped, fl: true, jumps: 0, lands: 0, stepAcc: 0, bob: 0 };
-    this.keys = 0; this.exitOpen = false; this.ended = false; this.paused = false;
+    this.keys = 0; this.myKeys = 0; this.deposited = 0; this.exitOpen = false; this.ended = false; this.paused = false;
+    this.keyViews = []; this.foundBodies = new Set(); this.bodyKeys = new Map(); this.waves = []; this.lastAct = null;
+    this.buildXray();
     this.sendAcc = 0; this.t = 0; this.ambT = 3; this.breathT = 0; this.heartT = 0; this.pantT = 0;
     this.spectate = null; this.deathT = null; this.deathCam = null;
     this.toasts = [];
@@ -64,6 +81,8 @@ export class Game {
     const hf = document.getElementById('hFl'); if (hf) hf.style.display = '';
     const vg = document.getElementById('vignette'); if (vg) vg.style.opacity = '';
     for (const r of this.remoteSpots) this.R.scene.remove(r.s, r.s.target, r.c);
+    if (this.exitXray) this.R.scene.remove(this.exitXray);
+    if (this.ghosts) for (const g of this.ghosts.values()) this.R.scene.remove(g);
     for (const l of this.pool.lights) this.R.scene.remove(l.l);
     for (const m of this.mates.values()) this.R.scene.remove(m.v.root);
     this.R.handScene.remove(this.hand.root, this.handFront);
@@ -74,13 +93,15 @@ export class Game {
   applyFullState(s) {
     if (!s) return;
     s.doors.forEach((o, i) => { this.world.doorOpen[i] = o; const v = this.view.doors[i]; if (v) { v.open = !!o; v.cur = o ? 1 : 0; } });
-    s.containers.forEach((o, i) => { const v = this.view.containers[i]; if (v) { v.open = !!o; v.cur = o ? 1 : 0; } });
-    for (const [cid, k] of Object.entries(s.revealed || {})) { this.keyPresent[cid] = k; const v = this.view.containers[cid]; if (v) { v.key.visible = true; v.keyShown = true; } }
+    // v2: cada gaveta/porta de móvel tem seu estado
+    (s.parts || []).forEach((arr, i) => { const v = this.view.containers[i]; if (!v) return; arr.forEach((o, j) => { const pt = v.parts[j]; if (pt) { pt.open = !!o; pt.cur = o ? 1 : 0; } }); });
+    this.deposited = s.deposited || 0;
+    for (const k of s.keys || []) this.setupKey(k);
     s.knocked.forEach((k, i) => { if (k) { const v = this.view.knockables[i]; v.knocked = true; v.t = 1; } });
     this.keys = s.keysCollected; this.exitOpen = s.exitOpen; this.world.exitOpen = s.exitOpen;
     if (this.exitOpen) { this.view.exit.open = true; }
     this.playersMeta = new Map((s.players || []).map(p => [p.id, p]));
-    for (const p of s.players || []) this.names[p.id] = p.name;
+    for (const p of s.players || []) { this.names[p.id] = p.name; if (p.id === this.myId) this.myKeys = p.keys || 0; else if (!p.alive) this.bodyKeys.set(p.id, p.keys || 0); }
   }
   onSnapshot(m) {
     const now = performance.now();
@@ -106,24 +127,42 @@ export class Game {
     switch (e.type) {
       case 'door': { this.world.doorOpen[e.id] = e.open ? 1 : 0; const v = V.doors[e.id]; if (v) v.open = e.open; break; }
       case 'container': {
-        const v = V.containers[e.id]; if (!v) break; v.open = e.open;
-        if (e.key !== null && e.key !== undefined && e.open) { this.keyPresent[e.id] = e.key; v.key.visible = true; v.keyShown = true; if (e.by === this.myId) this.toast('Uma chave! Pressione E para pegar.', 'key'); }
+        const v = V.containers[e.id]; if (!v) break;
+        const pt = v.parts[e.part || 0]; if (pt) pt.open = e.open;
+        if (e.open && e.keys && e.keys.length && e.by === this.myId) this.toast('Uma chave! Mire nela e pressione E para pegar.', 'key');
         break;
       }
       case 'key': {
-        const v = V.containers[e.container]; if (v) { v.key.visible = false; v.keyShown = false; }
-        delete this.keyPresent[e.container];
+        const kv = this.keyViews[e.key]; if (kv) kv.state = 'carried';
         this.keys = e.count;
-        this.toast(`${e.by === this.myId ? 'Você encontrou' : (e.name + ' encontrou')} uma chave (${e.count}/${e.needed})`, 'key');
-        if (e.count >= e.needed) setTimeout(() => this.toast('Todas as chaves encontradas! Destranque a saída no hall de entrada.', 'key'), 1200);
-        if (e.by === this.myId) { this.handAnim.trigger('interact'); this.app.stats.keys = (this.app.stats.keys || 0) + 1; }
+        if (e.by === this.myId) { this.myKeys = e.carried; this.toast(`Você pegou uma chave — você tem ${e.carried} chave${e.carried > 1 ? 's' : ''}.`, 'key'); this.handAnim.trigger('interact'); this.app.stats.keys = (this.app.stats.keys || 0) + 1; }
+        else this.toast(`${e.name} pegou uma chave.`, 'key');
         break;
       }
-      case 'knock': { const v = V.knockables[e.id]; if (v) { v.knocked = true; } if (e.by === this.myId && e.how === 'esbarrou') this.toast('Você esbarrou em algo… barulho!', 'warn'); break; }
+      case 'deposit': {
+        this.deposited = e.total;
+        if (e.by === this.myId) this.myKeys = 0;
+        this.toast(`${e.by === this.myId ? 'Você colocou' : e.name + ' colocou'} ${e.n} chave${e.n > 1 ? 's' : ''} na porta (${e.total}/${e.needed}).`, 'key');
+        break;
+      }
+      case 'bodykeys': {
+        this.bodyKeys.set(e.id, 0);
+        if (e.by === this.myId) { this.myKeys = e.carried; this.toast(`Você pegou ${e.n} chave${e.n > 1 ? 's' : ''} com ${this.name(e.id)}.`, 'key'); }
+        break;
+      }
+      case 'knock': {
+        const v = V.knockables[e.id]; if (!v) break;
+        if (e.state === 'wobble') { v.wobble = 1; break; }
+        v.knocked = true;
+        if (e.by === this.myId && e.how === 'esbarrou') this.toast('Você esbarrou em algo… barulho!', 'warn');
+        break;
+      }
       case 'exit': this.exitOpen = true; this.world.exitOpen = true; V.exit.open = true; this.toast(`${e.by === this.myId ? 'Você destrancou' : e.name + ' destrancou'} a saída! Fujam!`, 'key'); break;
       case 'death': {
+        // v2: a morte de um colega NÃO é anunciada — só quem achar o corpo fica sabendo.
+        // Exceção: se ele levava chave, o corpo aparece como "fantasminha" através das paredes.
         if (e.id === this.myId) this.onMyDeath(e);
-        else { this.toast(`${e.name} foi encontrado pela criatura.`, 'death'); const m = this.mates.get(e.id); if (m) m.dead = true; }
+        else { const m = this.mates.get(e.id); if (m) m.dead = true; this.bodyKeys.set(e.id, e.keys || 0); if (e.keys) this.toast('Um brilho estranho apareceu na casa… (alguém deixou chaves)', 'warn'); }
         if (this.playersMeta.get(e.id)) this.playersMeta.get(e.id).alive = false;
         break;
       }
@@ -139,7 +178,15 @@ export class Game {
       case 'sound': {
         const pos = new THREE.Vector3(e.x, e.y, e.z);
         const name = e.sound;
+        // onda na tela: barulhos meus, perto de mim, ou tão altos que a casa inteira ouve
+        if (e.lvl) {
+          const cam = this.R.camera.position;
+          const near = Math.hypot(e.x - cam.x, e.z - cam.z) < 16 && Math.abs(e.level - (this.camLevel ?? this.p.level)) <= 1;
+          if (e.by === this.myId || near || e.lvl === 'red') this.pushWave(e.lvl, e.by === this.myId);
+        }
+        if (name === 'step_run') break; // passos de corrida já tocam localmente / pela interpolação dos colegas
         if (name.startsWith('door_')) this.audio.play(name, pos, { close: false });
+        else if (name === 'creak') this.audio.play('creak', pos, { volume: e.by === this.myId ? 0.9 : 1.1 });
         else this.audio.play(name, pos);
         break;
       }
@@ -298,6 +345,8 @@ export class Game {
     this.handAnim.update(dt, { speed: active ? (p.speed || 0) : 0, running: p.running, crouch: p.crouch, on: p.fl, yawVel, pitchVel, dead: !p.alive, stepPhase: (p.stepN || 0) + (p.stepAcc || 0) / (p.stride || 0.75) });
     // ----- animação de portas, recipientes, objetos -----
     this.animateWorld(dt);
+    this.updateXray(dt);
+    this.drawWave();
     // ----- interação -----
     this.target = active && !this.paused ? this.findTarget() : null;
     this.ui.setPrompt(this.target ? this.target.text : '');
@@ -328,33 +377,65 @@ export class Game {
     const tg = this.target;
     this.handAnim.trigger('interact');
     if (tg.kind === 'exit' && !tg.can) { this.toast(tg.text, 'warn'); return; }
-    this.net.send({ t: 'act', kind: tg.req, id: tg.id });
+    // anti-repique: o mesmo alvo não é acionado de novo em menos de 0,45 s
+    const sig = tg.req + ':' + tg.id + ':' + (tg.part ?? '') + ':' + (tg.key ?? '');
+    const now = performance.now();
+    if (this.lastAct && this.lastAct.sig === sig && now - this.lastAct.t < 450) return;
+    this.lastAct = { sig, t: now };
+    const msg = { t: 'act', kind: tg.req, id: tg.id };
+    if (tg.kind === 'door') { msg.open = !this.view.doors[tg.id].open; this.view.doors[tg.id].open = msg.open; } // envia o estado DESEJADO e já começa a animar
+    if (tg.kind === 'container') { msg.part = tg.part; const pt = this.view.containers[tg.id].parts[tg.part]; msg.open = !pt.open; pt.open = msg.open; }
+    if (tg.kind === 'key') msg.key = tg.key;
+    this.net.send(msg);
   }
-  onInteractResult(m) { if (!m.ok && m.msg) this.toast(m.msg, 'warn'); }
+  onInteractResult(m) {
+    if (!m.ok && m.msg) this.toast(m.msg, 'warn');
+    // pedido recusado: desfaz a animação adiantada
+    if (!m.ok && m.req === 'door' && this.view.doors[m.id]) this.view.doors[m.id].open = !!this.world.doorOpen[m.id];
+    if (m.req === 'container' && this.view.containers[m.id] && m.part !== undefined && typeof m.open === 'boolean') this.view.containers[m.id].parts[m.part].open = m.open;
+  }
   findTarget() {
     const cam = this.R.camera;
     const ray = new THREE.Ray(cam.position.clone(), new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion));
     let best = null, bd = 2.3;
     const hit = new THREE.Vector3();
+    const consider = (it, maxD = 2.3) => {
+      const h = ray.intersectBox(it.box, hit);
+      if (!h) return;
+      const d = h.distanceTo(cam.position);
+      if (d < Math.min(bd, maxD) || (it.kind === 'key' && d < maxD && best && best.kind === 'container' && d < bd + 0.35)) { bd = d; best = it; }
+    };
     for (const it of this.view.interact) {
       if (it.level !== this.p.level) continue;
       const c = it.box.getCenter(hit);
       if (c.distanceTo(cam.position) > 4) continue;
-      const h = ray.intersectBox(it.box, hit);
-      if (!h) continue;
-      const d = h.distanceTo(cam.position);
-      if (d < bd) { bd = d; best = it; }
+      consider(it);
+    }
+    // chaves visíveis (prioridade sobre a gaveta onde estão) e corpos de colegas com chaves
+    for (const kv of this.keyViews) {
+      if (!kv || !kv.mesh.visible || kv.level !== this.p.level) continue;
+      kv.mesh.getWorldPosition(hit);
+      const box = new THREE.Box3().setFromCenterAndSize(hit.clone(), new THREE.Vector3(0.32, 0.25, 0.32));
+      consider({ kind: 'key', key: kv.id, box }, 2.6);
+    }
+    for (const [id, n] of this.bodyKeys) {
+      if (!n) continue; const m = this.mates.get(id); if (!m || !m.v.root.visible) continue;
+      const pos = m.v.root.position;
+      if (Math.abs(pos.y - this.p.y) > 1.5) continue;
+      const box = new THREE.Box3().setFromCenterAndSize(new THREE.Vector3(pos.x, pos.y + 0.4, pos.z), new THREE.Vector3(1.2, 1.0, 1.2));
+      consider({ kind: 'body', id, box }, 2.4);
     }
     if (!best) return null;
     const V = this.view;
+    if (best.kind === 'key') return { kind: 'key', req: 'key', id: null, key: best.key, text: '[E] Pegar chave' };
+    if (best.kind === 'body') return { kind: 'body', req: 'body', id: best.id, text: `[E] Pegar as chaves de ${this.name(best.id)}` };
     if (best.kind === 'container') {
-      const c = V.containers[best.id];
-      if (c.open && c.keyShown) return { kind: 'key', req: 'key', id: best.id, text: '[E] Pegar chave' };
-      return { kind: 'container', req: 'container', id: best.id, text: `[E] ${c.open ? 'Fechar' : 'Abrir'} ${c.label}` };
+      const c = V.containers[best.id]; const pt = c.parts[best.part || 0];
+      return { kind: 'container', req: 'container', id: best.id, part: best.part || 0, text: `[E] ${pt.open ? 'Fechar' : 'Abrir'} ${pt.label}` };
     }
     if (best.kind === 'door') {
       const d = V.doors[best.id];
-      const extra = d.type === 'rusty' ? ' (enferrujada — muito barulho)' : d.type === 'heavy' ? ' (pesada — barulhenta)' : '';
+      const extra = d.type === 'rusty' ? ' (enferrujada — barulho médio)' : d.type === 'heavy' ? ' (pesada — barulho médio)' : '';
       return { kind: 'door', req: 'door', id: best.id, text: `[E] ${d.open ? 'Fechar' : 'Abrir'} porta${extra}` };
     }
     if (best.kind === 'knock') {
@@ -363,10 +444,113 @@ export class Game {
     }
     if (best.kind === 'exit') {
       if (this.exitOpen) return null;
-      const can = this.keys >= this.keysNeeded;
-      return { kind: 'exit', req: 'exit', id: 0, can, text: can ? '[E] Destrancar a saída' : `Saída trancada — chaves: ${this.keys}/${this.keysNeeded}` };
+      const can = this.myKeys > 0;
+      return { kind: 'exit', req: 'exit', id: 0, can, text: can ? `[E] Colocar ${this.myKeys} chave${this.myKeys > 1 ? 's' : ''} na porta (${this.deposited}/${this.keysNeeded})` : `Porta trancada — ${this.deposited}/${this.keysNeeded} chaves colocadas. Você não tem chaves.` };
     }
     return null;
+  }
+  // ---------------- v2: chaves, marcadores através das paredes, onda de som ----------------
+  setupKey(k) {
+    let kv = this.keyViews[k.id];
+    if (!kv) {
+      const mesh = buildKey(this.app.M);
+      const o = k.spot;
+      if (o.type === 'part') {
+        const pt = this.view.containers[o.c] && this.view.containers[o.c].parts[o.part];
+        if (pt && pt.anchor) { mesh.rotation.set(-Math.PI / 2, 0, 0.6); pt.anchor.add(mesh); }
+        kv = { id: k.id, mesh, spot: o, level: this.map.containers[o.c].level, part: pt };
+      } else {
+        const sf = this.map.surfaces[o.s];
+        mesh.position.set(sf.x, sf.y + 0.01, sf.z); mesh.rotation.set(-Math.PI / 2, 0, (sf.id * 1.7) % 6.28);
+        this.view.levels[sf.level].add(mesh);
+        kv = { id: k.id, mesh, spot: o, level: sf.level, part: null };
+      }
+      this.keyViews[k.id] = kv;
+    }
+    kv.state = k.state;
+  }
+  buildXray() {
+    // porta de saída vista através das paredes quando você carrega uma chave
+    const e = this.map.exit, half = e.cells.length * CELL / 2, dh = Math.min(LEVELS[1].h - 0.45, 2.75);
+    const g = new THREE.Group(); g.renderOrder = 999;
+    const mat = xrayMat(0xfff2d0, 0.85);
+    const bar = (w, h, x, y) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat); m.position.set(x, y, 0); m.renderOrder = 999; g.add(m); };
+    bar(half * 2 + 0.2, 0.06, 0, dh); bar(half * 2 + 0.2, 0.06, 0, 0.03); bar(0.06, dh, -half - 0.07, dh / 2); bar(0.06, dh, half + 0.07, dh / 2);
+    const fill = new THREE.Mesh(new THREE.PlaneGeometry(half * 2, dh), xrayMat(0xffd890, 0.12)); fill.position.set(0, dh / 2, 0); fill.renderOrder = 998; g.add(fill);
+    g.position.set(e.x, LEVELS[1].y, CELL * 0.9);
+    g.visible = false; this.R.scene.add(g); this.exitXray = g; this.exitXrayMat = mat; this.exitXrayFill = fill.material;
+    // fantasminhas (corpos com chaves)
+    this.ghostTex = ghostTexture(); this.ghosts = new Map();
+  }
+  ghostFor(id) {
+    if (!this.ghosts.has(id)) {
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.ghostTex, transparent: true, depthTest: false, depthWrite: false, opacity: 0.85 }));
+      sp.scale.set(0.6, 0.75, 1); sp.renderOrder = 1000; this.R.scene.add(sp); this.ghosts.set(id, sp);
+    }
+    return this.ghosts.get(id);
+  }
+  updateXray(dt) {
+    const t = this.t;
+    const showExit = this.myKeys > 0 && !this.exitOpen && this.p.alive && !this.p.escaped;
+    this.exitXray.visible = showExit;
+    if (showExit) { const k = 0.55 + 0.3 * Math.sin(t * 2.4); this.exitXrayMat.opacity = k; this.exitXrayFill.opacity = 0.08 + 0.06 * Math.sin(t * 2.4); }
+    // fantasminha: corpo de colega morto que ainda tem chaves (o próprio morto não vê o seu)
+    const snapP = this.lastSnap ? this.lastSnap.players : [];
+    for (const sp of snapP) {
+      if (sp.id === this.myId) continue;
+      const n = sp.alive ? 0 : (sp.k ?? this.bodyKeys.get(sp.id) ?? 0);
+      if (!sp.alive) this.bodyKeys.set(sp.id, n);
+      const show = n > 0 && !sp.alive && !this.ended;
+      if (!show && !this.ghosts.has(sp.id)) continue;
+      const gh = this.ghostFor(sp.id);
+      gh.visible = show;
+      if (show) { gh.position.set(sp.x, sp.y + 1.1 + Math.sin(t * 1.8 + sp.x) * 0.12, sp.z); gh.material.opacity = 0.6 + 0.25 * Math.sin(t * 3.1); }
+    }
+    // achar o corpo de um colega (sem chaves, a morte não é anunciada): perto e com linha de visão
+    if (this.p.alive) for (const sp of snapP) {
+      if (sp.id === this.myId || sp.alive || this.foundBodies.has(sp.id)) continue;
+      const d = Math.hypot(sp.x - this.p.x, sp.z - this.p.z);
+      if (d < 7 && sp.level === this.p.level && this.world.lineOfSight(this.p.level, this.p.x, this.p.z, sp.x, sp.z)) {
+        this.foundBodies.add(sp.id); this.toast(`Você encontrou o corpo de ${this.name(sp.id)}…`, 'death'); this.audio.play('stinger', null, { volume: 0.45 });
+      }
+    }
+    // brilho das chaves: branco, piscando sutil
+    for (const kv of this.keyViews) {
+      if (!kv) continue;
+      const vis = kv.state === 'placed' && (!kv.part || (kv.part.open && kv.part.cur > 0.35));
+      kv.mesh.visible = vis;
+      if (vis && kv.mesh.userData.halo) kv.mesh.userData.halo.material.opacity = 0.35 + 0.35 * (0.5 + 0.5 * Math.sin(t * 3.2 + kv.id));
+    }
+    if (this.app.M.keyGold) { this.app.M.keyGold.emissive.setHex(0xfff4e0); this.app.M.keyGold.emissiveIntensity = 0.7 + 0.5 * (0.5 + 0.5 * Math.sin(t * 3.2)); }
+  }
+  pushWave(lvl, mine) {
+    this.waves.push({ lvl, t0: this.t, mine });
+    if (this.waves.length > 8) this.waves.shift();
+  }
+  // Onda estilo rádio, sombria: amplitude cai com o tempo; a cor é a do som mais alto ainda ativo
+  drawWave() {
+    const cv = this.waveCv || (this.waveCv = document.getElementById('wave'));
+    if (!cv) return;
+    const g = cv.getContext('2d'), W2 = cv.width, H2 = cv.height, t = this.t;
+    g.clearRect(0, 0, W2, H2);
+    this.waves = this.waves.filter(w => t - w.t0 < 1.8);
+    let top = null, amp = 0;
+    for (const w of this.waves) {
+      const r = LEVEL_INFO[w.lvl].rank, a = (1 - (t - w.t0) / 1.8) * (r / 3);
+      if (!top || r > LEVEL_INFO[top.lvl].rank) top = w;
+      amp = Math.max(amp, a);
+    }
+    const color = top ? LEVEL_INFO[top.lvl].color : 'rgba(150,160,170,0.35)';
+    g.lineWidth = 2; g.strokeStyle = color; g.shadowColor = color; g.shadowBlur = top ? 12 : 0;
+    g.beginPath();
+    for (let x = 0; x <= W2; x += 2) {
+      const u = x / W2, env = Math.sin(u * Math.PI);
+      const n = Math.sin(u * 38 + t * 22) * 0.6 + Math.sin(u * 91 - t * 31) * 0.3 + Math.sin(u * 7 + t * 5) * 0.4;
+      const y = H2 / 2 + n * env * (2 + amp * (H2 * 0.45));
+      if (x === 0) g.moveTo(x, y); else g.lineTo(x, y);
+    }
+    g.stroke(); g.shadowBlur = 0;
+    if (top && amp > 0.05) { g.fillStyle = color; g.font = 'bold 10px monospace'; g.textAlign = 'center'; g.fillText(LEVEL_INFO[top.lvl].name, W2 / 2, 11); }
   }
   animateWorld(dt) {
     const V = this.view;
@@ -378,18 +562,21 @@ export class Game {
       const e = d.cur * d.cur * (3 - 2 * d.cur);
       for (const lf of d.leaves) lf.pv.rotation.y = lf.side * -1 * d.swing * e * 1.65 * -1;
     }
-    for (const c of V.containers) {
-      if (!c) continue;
-      const tgt = c.open ? 1 : 0;
-      if (Math.abs(c.cur - tgt) < 0.001) continue;
-      c.cur += Math.sign(tgt - c.cur) * Math.min(Math.abs(tgt - c.cur), dt * 2.5);
-      const e = c.cur * c.cur * (3 - 2 * c.cur);
-      if (c.type === 'drawer') c.part.position.z = (c.part.userData.z0 ??= c.part.position.z) + e * c.amount;
-      else if (c.type === 'door') { c.part.rotation.y = e * c.amount; if (c.extra) c.extra.rotation.y = -e * c.amount * 0.9; }
-      else if (c.type === 'lid') c.part.rotation.x = e * c.amount;
+    for (const cv of V.containers) {
+      if (!cv) continue;
+      for (const c of cv.parts) {
+        const tgt = c.open ? 1 : 0;
+        if (Math.abs(c.cur - tgt) < 0.001) continue;
+        c.cur += Math.sign(tgt - c.cur) * Math.min(Math.abs(tgt - c.cur), dt * 2.5);
+        const e = c.cur * c.cur * (3 - 2 * c.cur);
+        if (c.type === 'drawer') c.part.position.z = (c.part.userData.z0 ??= c.part.position.z) + e * c.amount;
+        else if (c.type === 'door') { c.part.rotation.y = e * c.amount; if (c.extra) c.extra.rotation.y = -e * c.amount * 0.9; }
+        else if (c.type === 'lid') c.part.rotation.x = e * c.amount;
+      }
     }
-    for (const c of V.containers) if (c && c.key.visible) { c.key.rotation.z += dt * 0.6; }
     for (const k of V.knockables) {
+      // balanço (esbarrão leve): oscila e para
+      if (k && !k.knocked && k.wobble > 0) { k.wobble = Math.max(0, k.wobble - dt * 0.8); k.g.rotation.x = Math.sin(this.t * 18) * 0.14 * k.wobble; k.g.rotation.z = Math.cos(this.t * 15) * 0.1 * k.wobble; }
       if (!k || !k.knocked || k.t >= 1) { if (k && k.knocked && k.t >= 1 && !k.done) { k.done = true; k.g.rotation.set(Math.PI / 2, k.rot, 0); k.g.position.y = LEVELS[k.level].y + 0.08; } continue; }
       k.t = Math.min(1, k.t + dt * 2.5);
       k.g.rotation.x = k.t * Math.PI / 2; k.g.position.y = LEVELS[k.level].y + 0.08 * k.t;
@@ -397,7 +584,7 @@ export class Game {
     }
     const ex = V.exit;
     if (ex) {
-      for (let i = 0; i < ex.locks.length; i++) ex.locks[i].visible = i < (this.keysNeeded - this.keys) && !this.exitOpen;
+      for (let i = 0; i < ex.locks.length; i++) ex.locks[i].visible = i < (this.keysNeeded - this.deposited) && !this.exitOpen;
       ex.chain.visible = !this.exitOpen;
       const tgt = ex.open ? 1 : 0;
       ex.cur += Math.sign(tgt - ex.cur) * Math.min(Math.abs(tgt - ex.cur), dt * 0.6);
@@ -520,10 +707,12 @@ export class Game {
     const c = this.cr.root;
     if (!c.visible && this.crState && Math.abs(this.crState.level - this.p.level) > 1) return;
     const d = c.position.distanceTo(this.R.camera.position);
-    if (d > 40) return;
+    if (d > 55) return;
     const side = foot === 'L' ? 0.2 : -0.2;
     const pos = new THREE.Vector3(c.position.x + Math.cos(c.rotation.y) * side, c.position.y + 0.05, c.position.z - Math.sin(c.rotation.y) * side);
-    this.audio.play('cstep', pos, { volume: 0.9 + run * 0.5, refDistance: 2.5, maxDistance: 50, rolloff: 1.1 });
+    // v2: passos pesados na madeira, audíveis de longe (direcionais, com oclusão por paredes)
+    const wood = this.world.surfaceAt(this.crState ? this.crState.level : 1, c.position.x, c.position.z) === 'wood';
+    this.audio.play('cstep', pos, { volume: (1.1 + run * 0.5) * (wood ? 1.25 : 1), refDistance: 3.2, maxDistance: 60, rolloff: 0.95 });
     this.shake = Math.max(this.shake || 0, Math.max(0, 1 - d / 10) * 0.6);
   }
   ambientAudio(dt) {
@@ -566,7 +755,7 @@ export class Game {
   // ---------------- ganchos de teste (E2E) ----------------
   debugState() {
     const c = this.crState;
-    return { me: { x: this.p.x, z: this.p.z, level: this.p.level, alive: this.p.alive, escaped: this.p.escaped, fl: this.p.fl }, keys: this.keys, keysNeeded: this.keysNeeded, exitOpen: this.exitOpen, creature: c ? { x: c.x, z: c.z, level: c.level, state: c.state } : null, mates: [...this.mates.entries()].map(([id, m]) => ({ id, x: m.rx, z: m.rz })), doorsOpen: Array.from(this.world.doorOpen), ended: this.ended, hashOk: this.hashOk, seed: this.seed, target: this.target ? this.target.text : null };
+    return { me: { x: this.p.x, z: this.p.z, level: this.p.level, alive: this.p.alive, escaped: this.p.escaped, fl: this.p.fl }, keys: this.keys, myKeys: this.myKeys, deposited: this.deposited, waves: this.waves.map(w => w.lvl), exitXray: !!(this.exitXray && this.exitXray.visible), ghosts: this.ghosts ? [...this.ghosts.entries()].filter(([, g]) => g.visible).map(([id]) => id) : [], keyVis: this.keyViews.map(k => k && k.mesh.visible), keysNeeded: this.keysNeeded, exitOpen: this.exitOpen, creature: c ? { x: c.x, z: c.z, level: c.level, state: c.state } : null, mates: [...this.mates.entries()].map(([id, m]) => ({ id, x: m.rx, z: m.rz })), doorsOpen: Array.from(this.world.doorOpen), ended: this.ended, hashOk: this.hashOk, seed: this.seed, target: this.target ? this.target.text : null };
   }
   setLook(yaw, pitch) { this.p.yaw = yaw; this.p.pitch = pitch; }
   teleport(x, z, level) { this.p.x = x; this.p.z = z; this.p.level = level; }

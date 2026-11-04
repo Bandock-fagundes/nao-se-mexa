@@ -177,14 +177,17 @@ export function buildMansion(map, world, M) {
     levels[p.level].add(g);
     staticByLevel[p.level].push(g);
     g.traverse(o => { if (o.userData.flame) res.flames.push(o); });
-    if (p.container !== undefined && g.userData.dyn) {
+    if (p.container !== undefined && g.userData.parts) {
+      // v2: cada parte (gaveta / porta / tampa) é um alvo próprio com sua caixa de mira
       const c = map.containers[p.container];
-      const dy = g.userData.dyn;
-      const key = buildKey(M); key.visible = false; key.rotation.set(-Math.PI / 2, 0, 0.6); dy.anchor.add(key);
-      const box = new THREE.Box3(new THREE.Vector3(p.x0 * CELL, LEVELS[p.level].y, p.z0 * CELL), new THREE.Vector3((p.x0 + p.sx) * CELL, LEVELS[p.level].y + (p.block === 'TALL' ? 2.1 : 1.0), (p.z0 + p.sz) * CELL));
-      const view = { id: c.id, kind: c.kind, label: dy.label, part: dy.part, extra: dy.extra, type: dy.type, amount: dy.amount, open: false, cur: 0, key, keyShown: false, level: p.level, box, ax: c.ax, az: c.az, x: c.x, z: c.z };
-      res.containers[c.id] = view;
-      res.interact.push({ kind: 'container', id: c.id, level: p.level, box });
+      g.updateMatrixWorld(true);
+      const whole = new THREE.Box3(new THREE.Vector3(p.x0 * CELL, LEVELS[p.level].y, p.z0 * CELL), new THREE.Vector3((p.x0 + p.sx) * CELL, LEVELS[p.level].y + (p.block === 'TALL' ? 2.1 : 1.0), (p.z0 + p.sz) * CELL));
+      const parts = g.userData.parts.map((dy, i) => {
+        const box = dy.type === 'drawer' ? new THREE.Box3().setFromObject(dy.part).expandByScalar(0.025) : whole;
+        res.interact.push({ kind: 'container', id: c.id, part: i, level: p.level, box });
+        return { idx: i, part: dy.part, extra: dy.extra, type: dy.type, amount: dy.amount, anchor: dy.anchor, label: dy.label, open: false, cur: 0, box };
+      });
+      res.containers[c.id] = { id: c.id, kind: c.kind, level: p.level, parts, box: whole, ax: c.ax, az: c.az, x: c.x, z: c.z, label: parts[0].label };
     }
   }
   // fusão por material (menos chamadas de desenho)
@@ -264,7 +267,7 @@ export function buildMansion(map, world, M) {
     B(fr, 0.07, wh, 0.08, M.trim, -ww / 2, wy, 0.03); B(fr, 0.07, wh, 0.08, M.trim, ww / 2, wy, 0.03);
     B(fr, 0.035, wh, 0.05, M.trim, 0, wy, 0.03); B(fr, ww, 0.035, 0.05, M.trim, 0, wy + wh * 0.15, 0.03);
     deco[wdw.level].push(fr);
-    if (!wdw.small && !wdw.curtain) for (const s of [-1, 1]) {
+    if (!wdw.small && !wdw.curtain && !wdw.noDrape) for (const s of [-1, 1]) {
       const geo = new THREE.PlaneGeometry(0.45, 2.4, 16, 1); const pos = geo.attributes.position;
       for (let i = 0; i < pos.count; i++) pos.setZ(i, Math.sin(pos.getX(i) * 38) * 0.04);
       geo.computeVertexNormals();
@@ -405,7 +408,7 @@ export class LightPool {
       s.l.position.set(lp.lx ?? lp.x, lp.y, lp.lz ?? lp.z);
       s.l.color.setHex(lp.color); s.l.distance = lp.range * 0.75;
       // poças de luz quentes e pequenas: a lanterna é a luz principal
-      s.l.intensity = lp.intensity * (lp.kind === 'moon' ? 1.0 : 0.6) * s.k * flicker(lp, t);
+      s.l.intensity = lp.intensity * (lp.kind === 'moon' ? 1.0 : 0.42) * s.k * flicker(lp, t); // v2: luzes da casa mais fracas — a lanterna manda
     }
   }
 }

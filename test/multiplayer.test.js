@@ -103,27 +103,34 @@ test('MP: portas, recipientes, chaves, morte e vitória sincronizados', async ()
   A.send({ t: 'act', kind: 'door', id: door.id });
   const de = await B.waitEvent(e => e.type === 'door' && e.id === door.id, 4000, 'porta em B');
   assert.equal(de.open, !door.initialOpen, JSON.stringify({ de, door: { id: door.id, initialOpen: door.initialOpen }, evs: B.events.filter(e => e.type === 'door') }));
-  // chave
+  // chaves (v2): 3 chaves, dentro de uma gaveta/porta específica ou sobre uma mesa; A pega todas
   A.send({ t: 'debug', cmd: 'keys' });
   const kr = await A.wait(m => m.t === 'dres' && m.keys, 3000, 'keys');
-  const k = kr.keys[0];
-  A.send({ t: 'debug', cmd: 'tp', x: k.ax, z: k.az, level: k.level });
-  await A.wait(m => m.t === 'dres', 3000, 'tp2');
-  A.send({ t: 'act', kind: 'container', id: k.id });
-  const ce = await B.waitEvent(e => e.type === 'container' && e.id === k.id, 4000, 'recipiente em B');
-  assert.equal(ce.open, true); assert.notEqual(ce.key, null);
-  A.send({ t: 'act', kind: 'key', id: k.id });
-  const ke = await B.waitEvent(e => e.type === 'key', 4000, 'chave em B');
-  assert.equal(ke.count, 1); assert.equal(ke.by, A.id);
-  const r1 = await A.wait(m => m.t === 'ires' && m.req === 'key', 3000, 'ires 1');
-  assert.equal(r1.ok, true);
-  // segunda coleta é recusada
-  A.send({ t: 'act', kind: 'key', id: k.id });
+  assert.equal(kr.keys.length, 3);
+  let n = 0;
+  for (const k of kr.keys) {
+    A.send({ t: 'debug', cmd: 'tp', x: k.ax, z: k.az, level: k.level });
+    await A.wait(m => m.t === 'dres', 3000, 'tp2');
+    if (k.id !== null) {
+      A.send({ t: 'act', kind: 'container', id: k.id, part: k.part, open: true });
+      const ce = await B.waitEvent(e => e.type === 'container' && e.id === k.id && e.part === k.part, 4000, 'recipiente em B');
+      assert.equal(ce.open, true); assert.ok(ce.keys.includes(k.key));
+    }
+    A.send({ t: 'act', kind: 'key', key: k.key });
+    const ke = await B.waitEvent(e => e.type === 'key' && e.key === k.key, 4000, 'chave em B');
+    n++; assert.equal(ke.carried, n); assert.equal(ke.by, A.id);
+    const r1 = await A.wait(m => m.t === 'ires' && m.req === 'key', 3000, 'ires 1');
+    assert.equal(r1.ok, true);
+  }
+  // segunda coleta da mesma chave é recusada
+  A.send({ t: 'act', kind: 'key', key: kr.keys[2].key });
   const r2 = await A.wait(m => m.t === 'ires' && m.req === 'key', 3000, 'ires');
   assert.equal(r2.ok, false);
   // morte de B: a criatura é colocada sobre ele
   const pb = A.snap.players.find(p => p.id === B.id);
   A.send({ t: 'debug', cmd: 'creature', x: pb.x + 0.6, z: pb.z, level: pb.level, state: 'hold' });
+  // B se mexe encostado nela (v2: o toque mata quem se mexe ou foi percebido)
+  for (let i = 1; i <= 4; i++) { B.send({ t: 'in', x: pb.x - 0.03 * i, z: pb.z, level: pb.level, yaw: 0, pitch: 0, fl: true }); await sleep(60); }
   const dA = await A.waitEvent(e => e.type === 'death' && e.id === B.id, 4000, 'morte vista por A');
   const dB = await B.waitEvent(e => e.type === 'death' && e.id === B.id, 4000, 'morte vista por B');
   assert.ok(dA && dB);
@@ -137,6 +144,8 @@ test('MP: portas, recipientes, chaves, morte e vitória sincronizados', async ()
   A.send({ t: 'debug', cmd: 'tp', x: e.x, z: e.z + 1.0, level: 1 });
   await A.wait(m => m.t === 'dres' && m.correction, 3000, 'tp exit');
   A.send({ t: 'act', kind: 'exit', id: 0 });
+  const dep = await B.waitEvent(ev => ev.type === 'deposit', 4000, 'depósito em B');
+  assert.equal(dep.n, 3); assert.equal(dep.total, 3);
   await B.waitEvent(ev => ev.type === 'exit', 4000, 'saída aberta em B');
   let z = e.z + 1.0;
   for (let i = 0; i < 16 && z > 0.2; i++) { z -= 0.12; A.send({ t: 'in', x: e.x, z, level: 1, yaw: 0, pitch: 0, fl: true }); await sleep(60); }
