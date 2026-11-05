@@ -9,7 +9,25 @@ import { GEN_VERSION, SERVER } from '../shared/config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.resolve(__dirname, '..', 'dist');
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2' };
+// v2: pasta pública da EVA ENGINE, servida em /eva/ (fica no repositório; o build do Render não precisa mudar)
+const PUBLIC_EVA = path.resolve(__dirname, '..', 'public-eva');
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.wasm': 'application/wasm', '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.bin': 'application/octet-stream', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.wav': 'audio/wav', '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8' };
+
+// /eva/... → arquivos de public-eva/ (pasta → index.html; arquivo inexistente → 404, sem cair no jogo)
+function serveEva(url, res) {
+  if (url.pathname === '/eva') { res.writeHead(301, { Location: '/eva/' + url.search }); return res.end(); }
+  let rel; try { rel = decodeURIComponent(url.pathname.slice('/eva/'.length)); } catch { res.writeHead(400); return res.end(); }
+  let file = path.normalize(path.join(PUBLIC_EVA, rel));
+  if (file !== PUBLIC_EVA && !file.startsWith(PUBLIC_EVA + path.sep)) { res.writeHead(403); return res.end(); }
+  fs.stat(file, (err, st) => {
+    if (!err && st.isDirectory()) file = path.join(file, 'index.html');
+    fs.readFile(file, (e2, data) => {
+      if (e2) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('Não encontrado.'); }
+      res.writeHead(200, { 'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
+      res.end(data);
+    });
+  });
+}
 
 export function createGameServer({ port = 0, host, dist = DIST, tickMs = 50, heartbeatMs = SERVER.heartbeatMs, keepAliveUrl = null, keepAliveMs = SERVER.keepAliveMs } = {}) {
   const manager = new RoomManager({ tickMs });
@@ -19,6 +37,7 @@ export function createGameServer({ port = 0, host, dist = DIST, tickMs = 50, hea
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ ok: true, rooms: manager.rooms.size, players: manager.activePlayers, genVersion: GEN_VERSION, uptime: Math.round(process.uptime()) }));
     }
+    if (url.pathname === '/eva' || url.pathname.startsWith('/eva/')) return serveEva(url, res);
     let file = path.normalize(path.join(dist, decodeURIComponent(url.pathname)));
     if (!file.startsWith(dist)) { res.writeHead(403); return res.end(); }
     fs.stat(file, (err, st) => {
