@@ -1,7 +1,29 @@
 # NÃO SE MEXA! — Relatório de conclusão
 
 Relatório objetivo pedido na seção 25 da especificação (itens 1 a 8), com base nos critérios da seção 23.
-Data da verificação: 03/11/2026.
+Data da verificação: 03/11/2026 (v1); atualização v2 em 05/11/2026 (seção abaixo).
+
+## Atualização v2 (BETA) — 05/11/2026
+
+**O que mudou na v2**
+- 3 chaves por casa em gavetas/portas específicas ou sobre mesas; inventário; porta de saída visível através das paredes
+  com chave no bolso; depósito em parcelas por qualquer jogador; máximo de 3 jogadores.
+- Sons em níveis (vermelho / amarelo / baixo) com onda na tela; criatura que corre até sons distantes, investiga, circula,
+  confere os vizinhos, persegue de longe e nunca some por muito tempo; quem fica parado e despercebido não morre.
+- Morte silenciosa: só quem acha o corpo sabe; corpo com chaves vira "fantasminha" e as chaves podem ser recuperadas.
+- **História da casa:** bilhetes, diário, livros abertos e recorte de jornal legíveis com **E** (o jogo não pausa), quadros
+  da família e desenhos de criança nas janelas. Colegas mortos ficam caídos no chão; música mais sombria; passos da criatura
+  na madeira; dentes/boca da criatura refeitos; varredura automática de sobreposição de móveis/quadros/janelas (0 em 100 casas).
+- Rede mais robusta: aviso de reinício do servidor, tolerância a engasgos (3 pings), 120 s para voltar, sala vazia aguarda 180 s.
+- Nova rota **/eva/** (página provisória "EVA ENGINE — em breve", servida da pasta `public-eva/`).
+
+**Testes da v2:** `npm test` **69/69** aprovados. `npm run e2e` (2 navegadores reais): na fase 1 da v2, **46/46**; nesta finalização a máquina de teste estava
+sobrecarregada (2 núcleos, outro teste de navegador rodando junto): rodada com **44/46** — 1 falha era um bug real da mira
+em gavetas de baixo (corrigido) e 1 foi queda de conexão causada pela página travada pela CPU (o jogo reconectou sozinho);
+uma rodada seguinte terminou com o Chrome fechando por sobrecarga. Publicado em 05/11/2026 (servidor sem jogadores no momento).
+- **Link:** https://nao-se-mexa.onrender.com · página provisória da EVA ENGINE: https://nao-se-mexa.onrender.com/eva/
+Limitações novas: com a lanterna muito perto (≈1,5 m), papéis claros, quadros e janelas ainda ficam bem claros no centro do
+facho; a versão continua marcada como BETA até o Gabriel jogar com amigos no link público.
 
 ---
 

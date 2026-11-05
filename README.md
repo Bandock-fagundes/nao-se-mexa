@@ -19,6 +19,11 @@ no hall de entrada e fujam antes que **a criatura** toque em alguém (o toque ma
 - **Criatura:** só vê quem se mexe; visto de muito longe, ela vem andando aos poucos. Ao ouvir um som longe, corre; perto,
   desacelera, vai ao local, circula e confere os cômodos vizinhos. Nunca some por muito tempo (às vezes vai longe, às vezes
   aparece perto "do nada", sem teleporte). Jogador parado e despercebido não morre por ela passar raspando.
+- **A história da casa:** bilhetes, páginas de diário, livros abertos e um recorte de jornal sobre os móveis, quadros da
+  família e desenhos de criança colados nas janelas contam o que aconteceu com os Albuquerque (1961–1974). Mire e aperte
+  **E** para ler ou olhar o quadro; **E** de novo (ou se afastar) fecha. **O jogo não pausa enquanto você lê.**
+- Colegas mortos ficam **caídos no chão** (pose de corpo); música do menu e da partida mais sombria; passos da criatura
+  com peso e garras na madeira.
 - **Máximo de 3 jogadores.** Morte de um colega não é anunciada — só quem acha o corpo fica sabendo; se ele levava chave, o
   corpo aparece como "fantasminha" através das paredes e dá para pegar as chaves dele.
 
@@ -44,7 +49,7 @@ A aba de testes fica em `http://localhost:3000/testar`.
 | Shift | correr (gasta fôlego e faz mais barulho) |
 | Ctrl (segurar) / **C** (alternar) | agachar — use **C** se o navegador fechar a aba com Ctrl+W |
 | Espaço | pular |
-| E | interagir (portas, cada gaveta, armários, baús, caixas, prateleiras, chave, colocar chaves na saída, corpo com chaves, derrubar objetos) |
+| E | interagir (ler bilhetes/livros, olhar quadros, portas, cada gaveta, armários, baús, caixas, prateleiras, chave, colocar chaves na saída, corpo com chaves, derrubar objetos) |
 | F | liga/desliga a lanterna |
 | Esc | pausa (o mundo **não** para — a criatura continua andando) |
 
@@ -124,3 +129,8 @@ e2e/      teste de navegador (puppeteer)
 ```
 
 Todos os modelos, texturas e sons são gerados por código — nenhum arquivo externo é baixado.
+
+## EVA ENGINE (em breve)
+
+O servidor também publica a pasta `public-eva/` em **`/eva/`** (ex.: https://nao-se-mexa.onrender.com/eva/).
+Por enquanto é só uma página "EVA ENGINE — em breve"; para publicar a engine, basta colocar o build estático dela nessa pasta.
