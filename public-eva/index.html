@@ -1,19 +1,183 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>EVA ENGINE — em breve</title>
-<style>
-  html, body { margin: 0; height: 100%; background: #050507; color: #e8dcc8; font-family: Georgia, serif; }
-  body { display: flex; align-items: center; justify-content: center; flex-direction: column; letter-spacing: 6px; }
-  h1 { font-size: clamp(28px, 6vw, 64px); margin: 0; text-shadow: 0 0 30px rgba(140, 160, 255, .5); }
-  p { opacity: .6; letter-spacing: 3px; }
-  a { color: #b8a888; }
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EVA ENGINE v.c — NÃO SE MEXA!</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%234f7fff' stroke-width='3'/%3E%3Ccircle cx='16' cy='16' r='7' fill='%23000'/%3E%3C/svg%3E" />
+  <script type="module" crossorigin src="./assets/index-CpaemoA-.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-CITD9sTq.css">
 </head>
 <body>
-  <h1>EVA ENGINE — em breve</h1>
-  <p>enquanto isso: <a href="/">NÃO SE MEXA!</a></p>
+  <!-- ================= BARRA DE CIMA ================= -->
+  <header id="top">
+    <div class="brand" data-help="inicio">
+      <!-- logo: buraco negro com disco de acreção azul e dourado (o mesmo tema da abertura do jogo) -->
+      <svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
+        <defs>
+          <linearGradient id="lg" x1="0" x2="1"><stop offset="0" stop-color="#4f7fff" /><stop offset=".5" stop-color="#ffffff" /><stop offset="1" stop-color="#e0a440" /></linearGradient>
+          <radialGradient id="rg"><stop offset=".55" stop-color="#000" /><stop offset=".72" stop-color="#1a2240" /><stop offset="1" stop-color="#000" stop-opacity="0" /></radialGradient>
+        </defs>
+        <circle cx="32" cy="32" r="30" fill="url(#rg)" />
+        <ellipse cx="32" cy="32" rx="27" ry="9" fill="none" stroke="url(#lg)" stroke-width="2.4" transform="rotate(-18 32 32)" />
+        <circle cx="32" cy="32" r="12.5" fill="#000" stroke="url(#lg)" stroke-width="1.6" />
+        <path d="M32 3 L33.6 9 L32 7.6 L30.4 9 Z" fill="#fff" opacity=".9" />
+      </svg>
+      <div class="word">EVA ENGINE <span class="ver">v.c</span></div>
+      <div class="proj">projeto: <b>NÃO SE MEXA!</b></div>
+    </div>
+    <div class="modes">
+      <button id="mOrbit" class="mode on" data-help="modeOrbit">⟳ Orbitar</button>
+      <button id="mTop" class="mode" data-help="modeTop">▦ Vista de cima</button>
+      <button id="mFps" class="mode" data-help="modeFps">🚶 Andar em 1ª pessoa</button>
+      <!-- v.c: câmera do desenvolvedor (voa através das paredes) + Editor de casa -->
+      <button id="mNoclip" class="mode" data-help="modeNoclip">🛠 Noclip / Editor</button>
+    </div>
+    <div class="actions">
+      <button id="btnTour" class="ghost" data-help="btnTour">? Tour</button>
+      <button id="btnExport" class="ghost" data-help="btnExport">⤓ Exportar configuração</button>
+      <button id="btnPlayHere" class="play" data-help="btnJogarAqui">▶ Jogar aqui</button>
+      <button id="btnPlay" class="ghost" data-help="btnJogar">↗ Jogo online</button>
+    </div>
+  </header>
+
+  <!-- ================= ESQUERDA: PROJETO ================= -->
+  <aside id="left" class="panel" data-help="projeto">
+    <div class="ph">PROJETO <span class="q" data-help="projeto">?</span></div>
+    <ul id="tree" class="tree"></ul>
+    <div class="ph sub">MINIMAPA <span class="q" data-help="minimapa">?</span></div>
+    <canvas id="minimap" width="300" height="180" data-help="minimapa" title="Clique para fazer barulho aqui"></canvas>
+    <div class="legend">
+      <span><i style="background:#ff3030"></i>criatura</span><span><i style="background:#5aa0ff"></i>jogador parado</span><span><i style="background:#ff9a30"></i>jogador se mexendo</span><span><i style="background:#ffc040"></i>chave</span><span><i style="background:#60e0ff"></i>corpo c/ chave</span><span><i style="background:#ffe08a"></i>caminho</span><span><i style="background:#3ce66e"></i>cheiro</span><span><i style="background:#d07a3a"></i>porta</span>
+    </div>
+  </aside>
+
+  <!-- ================= CENTRO: VIEWPORT 3D ================= -->
+  <main id="center">
+    <div id="viewport" data-help="viewport"></div>
+    <div id="vpTop">
+      <div id="floorTabs" class="floors" data-help="andar"></div>
+      <div id="vpTitle" class="vptitle"></div>
+    </div>
+    <div id="vpHint" class="hint"></div>
+    <div id="fpsHud" class="fpshud" hidden>
+      <div class="cross"></div>
+      <div class="keys">W A S D andar · Shift correr · C agachar · Mouse olhar (clique para capturar) · F lanterna · E porta · Esc soltar</div>
+      <div id="fpsInfo" class="info"></div>
+    </div>
+    <!-- v.c: selo de validação da casa editada + dica de teclas do editor -->
+    <div id="edBadge" class="edbadge" data-help="edStatus" hidden></div>
+    <div id="edDrag" class="eddrag" hidden></div>
+    <div id="danger" class="danger" hidden>A CRIATURA ESTÁ PERSEGUINDO!</div>
+    <!-- v.b: controles de TEMPO da partida real (pausa, câmera lenta, avançar 1 tick) -->
+    <div id="simBar" class="simbar" data-help="simBar">
+      <button id="sbPause" class="sbb" data-help="sbPause" title="Pausar / continuar (barra de espaço não, use este botão ou P)">⏸</button>
+      <button class="sbb sp" data-sp="0.25" data-help="sbSpeed">0,25×</button>
+      <button class="sbb sp" data-sp="0.5" data-help="sbSpeed">0,5×</button>
+      <button class="sbb sp on" data-sp="1" data-help="sbSpeed">1×</button>
+      <button class="sbb sp" data-sp="2" data-help="sbSpeed">2×</button>
+      <button id="sbStep" class="sbb" data-help="sbStep" title="Avançar 1 tick (0,05 s)">⏭ 1 tick</button>
+      <button id="sbNew" class="sbb" data-help="sbNew" title="Nova partida na mesma casa">↺</button>
+      <span id="sbInfo" class="sbinfo"></span>
+      <span class="q" data-help="simBar">?</span>
+    </div>
+    <!-- v.b: resumo do Raio-X em cima da visão 3D -->
+    <div id="xrHud" class="xrhud" data-help="xrHud" hidden><div id="xrState" class="xs"></div><div id="xrWhy" class="xw"></div></div>
+    <!-- v.b: linha do tempo (2 min) -->
+    <div id="tlBox" class="tlbox" data-help="timeline" hidden>
+      <canvas id="timeline" width="1200" height="128"></canvas>
+    </div>
+    <!-- v.b: HUD do "Jogar aqui" -->
+    <div id="playHud" class="playhud" hidden>
+      <div class="ph-keys" id="phKeys"></div>
+      <div class="ph-prompt" id="phPrompt"></div>
+      <div class="ph-stam"><i id="phStam"></i></div>
+      <div class="ph-status" id="phStatus"></div>
+    </div>
+    <div id="endCard" class="endcard" hidden>
+      <h2 id="endTitle"></h2><p id="endText"></p>
+      <div class="btns"><button id="endAgain" class="btn on">↺ Jogar de novo</button><button id="endXray" class="btn">🧠 Ver no Raio-X</button></div>
+    </div>
+  </main>
+
+  <!-- ================= DIREITA: INSPETOR ================= -->
+  <aside id="right" class="panel" data-help="inspetor">
+    <div class="ph">INSPETOR <span class="q" data-help="inspetor">?</span></div>
+    <div id="inspector"></div>
+  </aside>
+
+  <!-- ================= EMBAIXO: CONSOLE / AJUDA ================= -->
+  <footer id="bottom" class="panel">
+    <div class="tabs">
+      <button class="tab on" data-tab="help" data-help="ajuda">AJUDA</button>
+      <button class="tab" data-tab="console" data-help="console">CONSOLE <span id="logCount"></span></button>
+      <button class="tab" data-tab="thoughts" data-help="pensamentos">🧠 PENSAMENTOS DA CRIATURA <span id="thCount"></span></button>
+      <div class="fps" id="fpsMeter"></div>
+    </div>
+    <div id="helpPane" class="pane on"><h3 id="helpTitle"></h3><p id="helpText"></p></div>
+    <div id="consolePane" class="pane"><ol id="log"></ol></div>
+    <div id="thoughtsPane" class="pane"><ol id="thoughts"></ol></div>
+  </footer>
+
+  <!-- v.c: caixa "Copiar para o chat" -->
+  <div id="chatBox" class="modal" hidden>
+    <div class="mcard">
+      <h2>📋 Copiar para o chat</h2>
+      <p>Copie este texto e cole no chat com o assistente. Ele aplica estas mudanças no jogo de verdade. (O arquivo .json do "Exportar casa" tem os mesmos dados, completos.)</p>
+      <textarea id="chatText" readonly spellcheck="false"></textarea>
+      <div class="btns"><button id="chatCopy" class="btn on">📋 Copiar texto</button><button id="chatJson" class="btn gold">⤓ Baixar .json também</button><button id="chatClose" class="btn">Fechar</button></div>
+    </div>
+  </div>
+  <!-- v.c: folha de atalhos (tecla H) -->
+  <div id="keysSheet" class="modal keys" hidden>
+    <div class="mcard wide">
+      <h2>⌨ Atalhos de teclado <span class="dim">(tecla H abre/fecha)</span></h2>
+      <div class="kcols">
+        <div><h3>🛠 Noclip (voar)</h3>
+          <p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> voar para onde olha</p>
+          <p><kbd>Espaço</kbd> ou <kbd>E</kbd> subir</p>
+          <p><kbd>Q</kbd> / <kbd>C</kbd> / <kbd>Ctrl</kbd> descer <span class="dim">(cuidado: Ctrl+W fecha a aba)</span></p>
+          <p><kbd>Shift</kbd> 3× mais rápido</p>
+          <p><kbd>rodinha</kbd> muda a velocidade</p>
+          <p><kbd>botão direito</kbd> (segurar) olhar em volta</p>
+          <p><kbd>PageUp</kbd>/<kbd>PageDown</kbd> andar de cima / de baixo</p>
+        </div>
+        <div><h3>✥ Editar</h3>
+          <p><kbd>clique</kbd> selecionar · <kbd>arrastar</kbd> mover</p>
+          <p><kbd>←</kbd><kbd>↑</kbd><kbd>→</kbd><kbd>↓</kbd> mover 1 célula (0,5 m)</p>
+          <p><kbd>Alt</kbd>+seta / arrastar: livre (quadros, luzes, tapetes)</p>
+          <p><kbd>R</kbd> girar 90° · <kbd>Del</kbd> apagar</p>
+          <p><kbd>Ctrl</kbd>+<kbd>D</kbd> duplicar</p>
+          <p><kbd>Ctrl</kbd>+<kbd>Z</kbd> desfazer · <kbd>Ctrl</kbd>+<kbd>Y</kbd> refazer</p>
+          <p><kbd>V</kbd> selecionar · <kbd>B</kbd> parede · <kbd>N</kbd> porta</p>
+          <p><kbd>G</kbd> grade · <kbd>X</kbd> raio-X · <kbd>Esc</kbd> soltar seleção</p>
+        </div>
+        <div><h3>🚶 Jogo / partida</h3>
+          <p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> andar · <kbd>Shift</kbd> correr</p>
+          <p><kbd>C</kbd> agachar · <kbd>F</kbd> lanterna</p>
+          <p><kbd>E</kbd> interagir (gaveta, chave, porta)</p>
+          <p><kbd>P</kbd> pausar a partida</p>
+          <p><kbd>Esc</kbd> soltar o mouse</p>
+          <p><kbd>H</kbd> esta folha de atalhos</p>
+        </div>
+      </div>
+      <div class="btns"><button id="keysClose" class="btn">Fechar (H)</button></div>
+    </div>
+  </div>
+  <input id="importFile" type="file" accept=".json,application/json" hidden />
+  <!-- dica flutuante do "?" -->
+  <div id="tip" class="tip" hidden></div>
+  <!-- tour guiado -->
+  <div id="tour" class="tour" hidden>
+    <div class="spot" id="tourSpot"></div>
+    <div class="card" id="tourCard">
+      <div class="step" id="tourStep"></div>
+      <h2 id="tourTitle"></h2>
+      <p id="tourText"></p>
+      <div class="row"><button id="tourSkip" class="ghost">Pular</button><button id="tourNext" class="play">Próximo →</button></div>
+    </div>
+  </div>
+  <!-- tela de carregamento -->
+  <div id="boot" class="boot"><div class="bw">EVA ENGINE</div><div class="bl"></div><div class="bv">v.c</div><div class="bs" id="bootMsg">carregando o projeto…</div></div>
 </body>
 </html>
