@@ -407,6 +407,12 @@ export class Game {
       const h = ray.intersectBox(it.box, hit);
       if (!h) return;
       const d = h.distanceTo(cam.position);
+      // gavetas do MESMO móvel: olhando de cima para a gaveta de baixo, o raio entra antes na caixa da gaveta de cima;
+      // entre partes do mesmo móvel vale a que tem o centro mais perto da linha da mira (o pontinho)
+      if (it.kind === 'container' && best && best.kind === 'container' && best.id === it.id && d < maxD && Math.abs(d - bd) < 0.45) {
+        if (ray.distanceToPoint(it.box.getCenter(new THREE.Vector3())) < ray.distanceToPoint(best.box.getCenter(new THREE.Vector3()))) { bd = Math.min(bd, d); best = it; }
+        return;
+      }
       if (d < Math.min(bd, maxD) || (it.kind === 'key' && d < maxD && best && best.kind === 'container' && d < bd + 0.35)) { bd = d; best = it; }
     };
     for (const it of this.view.interact) {
