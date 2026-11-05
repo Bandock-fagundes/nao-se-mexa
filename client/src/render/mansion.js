@@ -268,7 +268,7 @@ export function buildMansion(map, world, M) {
     const { ww, wh, wy } = winSize(wdw);
     // v2 fase 2: vidro com céu noturno + desenhos de criança colados (5 variações; a mesma janela é igual para todos)
     const vk = (wi * 7 + (wdw.room || 0) * 3) % 5 + (wdw.small ? 's' : 'b');
-    if (!winMats.has(vk)) { const tx = windowTexture(parseInt(vk), wdw.small); winMats.set(vk, new THREE.MeshStandardMaterial({ map: tx, color: 0x9a9a9a, emissive: 0x6a7898, emissiveMap: tx, emissiveIntensity: 0.3, roughness: 0.38 }) /* menos brilho: com a lanterna de perto o vidro + papel estouravam (bloom na tela toda) */); }
+    if (!winMats.has(vk)) { const tx = windowTexture(parseInt(vk), wdw.small); winMats.set(vk, new THREE.MeshStandardMaterial({ map: tx, color: 0x7c7c7c, emissive: 0x5a6888, emissiveMap: tx, emissiveIntensity: 0.16, roughness: 0.5 }) /* menos brilho: com a lanterna de perto o vidro + papel estouravam (bloom na tela toda) */); }
     const glass = new THREE.Mesh(new THREE.PlaneGeometry(ww, wh), winMats.get(vk)); glass.position.set(0, wy, 0.012); g.add(glass);
     const fr = new THREE.Group(); g.add(fr);
     B(fr, ww + 0.14, 0.08, 0.08, M.trim, 0, wy + wh / 2, 0.03); B(fr, ww + 0.2, 0.08, 0.14, M.trim, 0, wy - wh / 2, 0.05);

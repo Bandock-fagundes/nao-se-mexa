@@ -5,12 +5,13 @@
 // Uso externo: window.__music.setTension(0.7)  ·  window.__music.stinger('death')
 const A = (n) => 440 * Math.pow(2, (n - 69) / 12); // nota MIDI -> Hz
 
-// Progressão i–VI–iv–V em Lá menor (vozes graves das cordas)
+// v2 fase 2 (mais sombria): progressão frígia i–bII–iv–i(b6) em Lá menor, melodia uma oitava abaixo,
+// com a 2ª menor (Si bemol) e o trítono (Ré#) aparecendo — soa "errado" de propósito
 const CHORDS = [
-  { pad: [45, 52, 57, 60], mel: [69, 72, 76, 81, 71] },      // Am
-  { pad: [41, 48, 53, 57], mel: [69, 72, 77, 81, 76] },      // F
-  { pad: [38, 50, 53, 57], mel: [69, 74, 77, 81, 72] },      // Dm
-  { pad: [40, 47, 52, 56], mel: [68, 71, 76, 80, 74] },      // E
+  { pad: [33, 45, 52, 57, 60], mel: [57, 60, 64, 58, 69] },      // Am
+  { pad: [34, 46, 53, 58, 62], mel: [58, 62, 65, 57, 70] },      // Bb (bII)
+  { pad: [38, 50, 53, 57], mel: [57, 62, 65, 63, 60] },          // Dm (com Ré#)
+  { pad: [33, 45, 52, 53, 60], mel: [56, 57, 60, 64, 53] },      // Am(b6)
 ];
 
 export class Music {
@@ -138,8 +139,9 @@ export class Music {
   // ---------------- MENU ----------------
   startMenu(L) {
     // drone grave (Lá1 + Mi2) com filtro respirando
-    const lp = this.filt('lowpass', 210, 1.2); const dg = this.gain(0.16, L.bus); lp.connect(dg);
+    const lp = this.filt('lowpass', 165, 1.2); const dg = this.gain(0.17, L.bus); lp.connect(dg);
     this.osc(L, 'sawtooth', A(33), lp, -6); this.osc(L, 'sawtooth', A(33), lp, 7); this.osc(L, 'sine', A(40), lp);
+    const tri = this.gain(0.018, L.wetBus); this.osc(L, 'sine', A(51), tri, 3); this.lfo(L, 0.03, 0.016, tri.gain); // trítono (Ré#) que entra e sai
     this.lfo(L, 0.05, 90, lp.frequency);
     const air = this.filt('bandpass', 420, 0.6); const ag = this.gain(0.035, L.wetBus); air.connect(ag); this.noiseLoop(L, this.e.pink, air);
     this.lfo(L, 0.08, 0.025, ag.gain);
@@ -193,10 +195,10 @@ export class Music {
         const mel = L.curMel || CHORDS[0].mel;
         if (L.beat % 4 === 1 || Math.random() < 0.38) {
           const n = mel[Math.floor(Math.random() * mel.length)];
-          this.piano(t, A(n), 0.11 + Math.random() * 0.05, L.wetBus);
+          this.piano(t, A(n), 0.09 + Math.random() * 0.04, L.wetBus);
           if (Math.random() < 0.2) this.piano(t + 0.5, A(n - 12), 0.07, L.wetBus);
         }
-        L.next += 1.0 + (Math.random() < 0.25 ? 1 : 0);
+        L.next += 1.4 + (Math.random() < 0.35 ? 1.4 : 0);
       }
     } else if (this.mode === 'loading') {
       while (L.next < ahead) {
@@ -217,7 +219,9 @@ export class Music {
         L.pulseNext = t + (1.15 - 0.55 * k);
       } else if (k <= 0.55) L.pulseNext = Math.max(L.pulseNext, now);
       // notas raras e frias quando calmo
-      if (L.next < ahead) { const t = L.next; if (k < 0.4 && Math.random() < 0.5) this.piano(t, A([57, 60, 63, 56][Math.floor(Math.random() * 4)]), 0.035, L.wetBus); L.next += 6 + Math.random() * 6; }
+      if (L.next < ahead) { const t = L.next; if (k < 0.4 && Math.random() < 0.5) { const n = [45, 46, 51, 44, 57][Math.floor(Math.random() * 5)]; this.piano(t, A(n), 0.04, L.wetBus); if (Math.random() < 0.4) this.piano(t + 0.9, A(n + 1), 0.025, L.wetBus); } // notas graves e 2ª menor
+        else if (k < 0.4 && Math.random() < 0.3) this.bell(t, A(84) * (1 + (Math.random() - 0.5) * 0.02), 0.006, L.wetBus, 4); // caixinha de música desafinada, bem longe
+        L.next += 6 + Math.random() * 6; }
     }
   }
 

@@ -150,8 +150,21 @@ export function animateTeammate(t, dt, s) {
   t.head.rotation.y = k('hdY', -sn * 0.06 * w, 10, 0.7);
   // morte: cai de lado (mola amortecida → sem estalo)
   t.dead = k('dead', s.alive ? 0 : 1, 6, 0.85);
-  t.root.rotation.z = t.dead * 1.45;
-  t.body.position.y -= t.dead * 0.2;
+  // v2 fase 2: pose de corpo caído (deitado de lado, encolhido, braço jogado para cima, cabeça virada) —
+  // mistura a pose viva com a pose caída conforme a mola 'dead' (0 → 1)
+  const d = clamp(t.dead, 0, 1.1);
+  if (d > 0.001) {
+    const mix = (o, ax, v) => { o.rotation[ax] += (v - o.rotation[ax]) * Math.min(d, 1); };
+    mix(P['hip-1'], 'x', -0.35); mix(P['hip1'], 'x', -0.95); mix(P['knee-1'], 'x', 0.55); mix(P['knee1'], 'x', 1.35);
+    mix(P['ankle-1'], 'x', 0.25); mix(P['ankle1'], 'x', 0.1);
+    mix(P['sh1'], 'x', -2.4); mix(P['sh1'], 'z', 0.35); mix(P['el1'], 'x', -0.35);
+    mix(P['sh-1'], 'x', -0.7); mix(P['sh-1'], 'z', -0.25); mix(P['el-1'], 'x', -1.1); mix(P['wr-1'], 'x', 0.4);
+    mix(t.spine, 'x', 0.32); mix(t.spine, 'y', 0.12); mix(t.pelvis, 'y', 0); mix(t.pelvis, 'z', 0);
+    mix(t.neck, 'x', 0.25); mix(t.head, 'x', 0.1); mix(t.head, 'y', 0.55); mix(t.head, 'z', 0.2);
+    t.body.position.y = t.body.position.y * (1 - Math.min(d, 1));
+  }
+  t.root.rotation.z = t.dead * 1.52;
+  t.body.position.x = Math.min(d, 1) * 0.12; // com a raiz girada ~90°, +X local vira 'para cima': o ombro/quadril apoia NO chão
   t.lensMat.emissiveIntensity = s.fl ? 3 : 0;
   t.first = false;
 }
