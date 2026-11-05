@@ -3,7 +3,10 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CELL, W, D, T, LEVELS, ROWS } from '../../../shared/config.js';
 import { buildProp, buildKey, buildKnockable, B, C, S, mesh, tint } from './props.js';
-import { paintingTexture } from './textures.js';
+import { storyPainting, windowTexture, noteTexture, NOTES, PAINTING_TITLES } from '../story.js';
+import { winSize } from './decorboxes.js';
+import { SURFACE_Y } from '../../../shared/mapgen.js';
+import { makeRng } from '../../../shared/rng.js';
 
 const OPEN = new Set([T.FLOOR, T.DOOR, T.STAIR, T.LOW, T.TALL, T.EXIT, T.HOLE, T.CURTAIN]);
 
@@ -37,7 +40,7 @@ const wallTopFor = (L) => L < 3 ? LEVELS[L + 1].y - LEVELS[L].y : LEVELS[L].h;
 export function buildMansion(map, world, M) {
   const root = new THREE.Group();
   const levels = [0, 1, 2, 3].map(L => { const g = new THREE.Group(); g.name = 'level' + L; root.add(g); return g; });
-  const res = { root, levels, doors: [], containers: [], knockables: [], lamps: [], interact: [], flames: [], flickerMeshes: [], exit: null, windows: [] };
+  const res = { root, levels, doors: [], containers: [], knockables: [], lamps: [], interact: [], flames: [], flickerMeshes: [], exit: null, windows: [], notes: [], paintings: [] };
   const lv = map.levels;
   const get = (L, x, z) => (x < 0 || z < 0 || x >= W || z >= D) ? T.VOID : lv[L].grid[z * W + x];
   const roomOf = (L, x, z) => (x < 0 || z < 0 || x >= W || z >= D) ? -1 : lv[L].room[z * W + x];
@@ -192,6 +195,7 @@ export function buildMansion(map, world, M) {
   }
   // fusão por material (menos chamadas de desenho)
   for (let L = 0; L < 4; L++) mergeStatic(staticByLevel[L], levels[L], root);
+  placeNotes(map, res, levels, M);
 
   // ---------- portas ----------
   for (const d of map.doors) {
@@ -258,10 +262,14 @@ export function buildMansion(map, world, M) {
   }
   // ---------- janelas, quadros, tapetes, cortinas ----------
   const deco = [[], [], [], []];
-  for (const wdw of map.windows) {
+  const winMats = new Map();
+  map.windows.forEach((wdw, wi) => {
     const g = new THREE.Group(); g.position.set(wdw.x, LEVELS[wdw.level].y, wdw.z); g.rotation.y = wdw.rot; levels[wdw.level].add(g);
-    const ww = wdw.small ? 0.6 : 1.0, wh = wdw.small ? 0.6 : 1.7, wy = wdw.small ? 1.4 : 1.75;
-    const glass = new THREE.Mesh(new THREE.PlaneGeometry(ww, wh), M.windowGlass); glass.position.set(0, wy, 0.012); g.add(glass);
+    const { ww, wh, wy } = winSize(wdw);
+    // v2 fase 2: vidro com céu noturno + desenhos de criança colados (5 variações; a mesma janela é igual para todos)
+    const vk = (wi * 7 + (wdw.room || 0) * 3) % 5 + (wdw.small ? 's' : 'b');
+    if (!winMats.has(vk)) { const tx = windowTexture(parseInt(vk), wdw.small); winMats.set(vk, new THREE.MeshStandardMaterial({ map: tx, color: 0x9a9a9a, emissive: 0x6a7898, emissiveMap: tx, emissiveIntensity: 0.3, roughness: 0.38 }) /* menos brilho: com a lanterna de perto o vidro + papel estouravam (bloom na tela toda) */); }
+    const glass = new THREE.Mesh(new THREE.PlaneGeometry(ww, wh), winMats.get(vk)); glass.position.set(0, wy, 0.012); g.add(glass);
     const fr = new THREE.Group(); g.add(fr);
     B(fr, ww + 0.14, 0.08, 0.08, M.trim, 0, wy + wh / 2, 0.03); B(fr, ww + 0.2, 0.08, 0.14, M.trim, 0, wy - wh / 2, 0.05);
     B(fr, 0.07, wh, 0.08, M.trim, -ww / 2, wy, 0.03); B(fr, 0.07, wh, 0.08, M.trim, ww / 2, wy, 0.03);
@@ -275,14 +283,18 @@ export function buildMansion(map, world, M) {
     }
     // luar
     res.lamps.push({ kind: 'moon', level: wdw.level, x: wdw.x + Math.sin(wdw.rot) * 0.8, y: LEVELS[wdw.level].y + wy, z: wdw.z + Math.cos(wdw.rot) * 0.8, color: 0x6a84c8, intensity: 1.1, range: 5.5, state: 'on' });
-  }
+  });
   for (const dc of map.decor) {
     const y0 = LEVELS[dc.level].y;
     if (dc.kind === 'painting') {
       const g = new THREE.Group(); g.position.set(dc.x, y0 + dc.y, dc.z); g.rotation.y = dc.rot; levels[dc.level].add(g);
       B(g, dc.w + 0.1, dc.h + 0.1, 0.05, M.brass, 0, 0, 0.025, 0x8a6a30);
-      const p = new THREE.Mesh(new THREE.PlaneGeometry(dc.w, dc.h), new THREE.MeshStandardMaterial({ map: paintingTexture(dc.v), roughness: 0.7 })); p.position.z = 0.053; g.add(p);
-      if (dc.v % 4 === 1) g.rotation.z = 0.06;
+      // v2 fase 2: quadros que contam a história da família (ver client/src/story.js)
+      const p = new THREE.Mesh(new THREE.PlaneGeometry(dc.w, dc.h), new THREE.MeshStandardMaterial({ map: storyPainting(dc.v), color: 0xb4a890, roughness: 0.82 }) /* tinta fosca: de perto a lanterna estourava o quadro */); p.position.z = 0.053; g.add(p);
+      if (dc.v % 4 === 1) g.rotation.z = 0.03; // levemente torto (cabe na moldura: a caixa de ocupação já tem folga)
+      g.updateMatrixWorld(true);
+      const pi = res.paintings.length; res.paintings.push({ v: dc.v, title: PAINTING_TITLES[dc.v % 8] });
+      res.interact.push({ kind: 'painting', id: pi, level: dc.level, box: new THREE.Box3().setFromObject(g).expandByScalar(0.04) });
     } else if (dc.kind === 'rug' || dc.kind === 'runner') {
       const mat = M.T.carpets[(dc.v || 0) % 3];
       const m = new THREE.Mesh(new THREE.PlaneGeometry(dc.w, dc.d), new THREE.MeshStandardMaterial({ ...mat, roughness: 1 }));
@@ -324,6 +336,12 @@ export function buildMansion(map, world, M) {
       const ring2 = mesh(new THREE.TorusGeometry(0.25, 0.015, 8, 24), M.brass); ring2.rotation.x = Math.PI / 2; ring2.position.y = 0.15; g.add(ring2);
       lamp.bulbs = [];
       for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2; C(g, 0.015, 0.015, 0.1, M.paper, Math.cos(a) * 0.45, 0.06, Math.sin(a) * 0.45, 0xe8dcc0, 6); const b = new THREE.Mesh(new THREE.SphereGeometry(0.014, 6, 6), glowMat); b.scale.y = 1.8; b.position.set(Math.cos(a) * 0.45, 0.14, Math.sin(a) * 0.45); g.add(b); lamp.bulbs.push(b); }
+    } else if (l.kind === 'flame') {
+      // v2 fase 2: chamas das 3 velas do candelabro da mesa de jantar (o candelabro é do próprio móvel)
+      const p = map.props[l.prop], th = [0, Math.PI / 2, Math.PI, -Math.PI / 2][p ? p.facing : 0];
+      g.position.set(p ? p.x : l.x, l.y, p ? p.z : l.z); g.rotation.y = th; lamp.bulbs = [];
+      for (const sx of [-0.12, 0, 0.12]) { const b = new THREE.Mesh(new THREE.SphereGeometry(0.012, 6, 6), glowMat); b.scale.y = 2; b.position.set(sx, 0.0, 0); g.add(b); lamp.bulbs.push(b); }
+      lamp.y = l.y + 0.05;
     } else if (l.kind === 'candle') {
       C(g, 0.02, 0.02, 0.12, M.paper, 0, 0.06, 0, 0xe8dcc0, 8); C(g, 0.04, 0.05, 0.015, M.brass, 0, 0.007, 0);
       lamp.bulb = new THREE.Mesh(new THREE.SphereGeometry(0.012, 6, 6), glowMat); lamp.bulb.scale.y = 2; lamp.bulb.position.y = 0.15; g.add(lamp.bulb);
@@ -346,6 +364,60 @@ export function buildMansion(map, world, M) {
   return res;
 }
 function wdt2(h) { return h * 2; }
+
+// ---------- v2 fase 2: bilhetes, páginas de diário, livros abertos e recorte de jornal sobre os móveis ----------
+// Escolha determinística (mesma casa = mesmos bilhetes para todos). Cada um só é colocado num ponto LIVRE do
+// tampo: raios de cima conferem que nada (livro, vela, prato, espelho) ocupa a área do papel.
+const NOTE_KINDS = ['desk', 'reading_table', 'nightstand', 'side_table', 'coffee_table', 'console', 'sideboard', 'dresser', 'ktable'];
+function placeNotes(map, res, levels, M) {
+  const rng = makeRng('bilhetes-' + map.seed);
+  const cands = map.props.filter(p => NOTE_KINDS.includes(p.kind) && SURFACE_Y[p.kind] !== undefined);
+  // embaralha e prefere um bilhete por cômodo, espalhados pelos andares
+  for (let i = cands.length - 1; i > 0; i--) { const j = Math.floor(rng.next() * (i + 1)); [cands[i], cands[j]] = [cands[j], cands[i]]; }
+  const usedRooms = new Set(), rc = new THREE.Raycaster(), down = new THREE.Vector3(0, -1, 0);
+  let n = 0;
+  for (const p of cands) {
+    if (n >= NOTES.length) break;
+    if (usedRooms.has(p.room)) continue;
+    const note = NOTES[n], base = LEVELS[p.level].y, topY = base + SURFACE_Y[p.kind];
+    const sz = note.type === 'book' ? [0.34, 0.25] : note.type === 'news' ? [0.3, 0.36] : [0.2, 0.27];
+    const lvl = levels[p.level]; lvl.updateMatrixWorld(true);
+    const th = [0, Math.PI / 2, Math.PI, -Math.PI / 2][p.facing];
+    const horiz = p.facing === 0 || p.facing === 2, w = (horiz ? p.sx : p.sz) * CELL, d = (horiz ? p.sz : p.sx) * CELL;
+    const free = (lx, lz, ang) => { // confere 9 pontos da área do papel (com 3 cm de folga)
+      for (const a of [-0.5, 0, 0.5]) for (const b of [-0.5, 0, 0.5]) {
+        const ux = lx + (a * (sz[0] + 0.06)) * Math.cos(ang) + (b * (sz[1] + 0.06)) * Math.sin(ang), uz = lz - (a * (sz[0] + 0.06)) * Math.sin(ang) + (b * (sz[1] + 0.06)) * Math.cos(ang);
+        const wx = p.x + ux * Math.cos(th) + uz * Math.sin(th), wz = p.z - ux * Math.sin(th) + uz * Math.cos(th);
+        rc.set(new THREE.Vector3(wx, topY + 1.2, wz), down); rc.far = 1.5;
+        const hit = rc.intersectObjects(lvl.children, true).find(h => h.object.isMesh);
+        if (!hit || Math.abs(hit.point.y - topY) > 0.012) return null;
+        for (const l of map.lamps) if (l.level === p.level && Math.hypot(l.x - wx, l.z - wz) < 0.09 && l.y > base + 0.3 && l.y < topY + 0.6) return null;
+        for (const sf of map.surfaces || []) if (sf.prop === p.id && Math.hypot(sf.x - wx, sf.z - wz) < 0.12) return null; // lugar reservado para chave
+      }
+      return true;
+    };
+    let spot = null;
+    for (let t = 0; t < 24 && !spot; t++) {
+      const lx = (rng.next() - 0.5) * Math.max(0, w - sz[0] - 0.2), lz = (rng.next() - 0.5) * Math.max(0, d - sz[1] - 0.2), ang = (rng.next() - 0.5) * 0.6;
+      if (free(lx, lz, ang)) spot = [lx, lz, ang];
+    }
+    if (!spot) continue;
+    const [lx, lz, ang] = spot;
+    const g = new THREE.Group(); g.position.set(p.x + lx * Math.cos(th) + lz * Math.sin(th), topY, p.z - lx * Math.sin(th) + lz * Math.cos(th)); g.rotation.y = th + ang;
+    const page = new THREE.MeshStandardMaterial({ map: noteTexture(note), color: 0x9c907a, roughness: 0.95 }) /* escurecido: sob a lanterna de perto o papel estourava em branco */;
+    if (note.type === 'book') {
+      // livro aberto: capa escura + duas páginas levemente curvadas para cima
+      B(g, sz[0], 0.02, sz[1], M.leather, 0, 0.01, 0, 0x5a1a14);
+      for (const s of [-1, 1]) { const pg = new THREE.Mesh(tint(new THREE.BoxGeometry(sz[0] / 2 - 0.01, 0.012, sz[1] - 0.02), 0xffffff), [M.paper, M.paper, page, M.paper, M.paper, M.paper]); pg.position.set(s * sz[0] / 4, 0.027, 0); pg.rotation.z = -s * 0.06; g.add(pg); }
+    } else {
+      const pg = new THREE.Mesh(tint(new THREE.BoxGeometry(sz[0], 0.003, sz[1]), 0xffffff), [M.paper, M.paper, page, M.paper, M.paper, M.paper]); pg.position.y = 0.0016; g.add(pg);
+    }
+    levels[p.level].add(g); g.updateMatrixWorld(true);
+    res.notes.push({ note, level: p.level, g });
+    res.interact.push({ kind: 'read', id: res.notes.length - 1, level: p.level, box: new THREE.Box3().setFromObject(g).expandByScalar(0.06) });
+    usedRooms.add(p.room); n++;
+  }
+}
 
 function mergeStatic(groups, parent, root) {
   const buckets = new Map();
@@ -415,7 +487,7 @@ export class LightPool {
 export function flicker(lp, t) {
   if (lp.state === 'flicker') {
     const s = lp.seed || 0;
-    if (lp.kind === 'candle' || lp.kind === 'fire') return 0.8 + 0.2 * Math.sin(t * 13 + s) * Math.sin(t * 7.3 + s * 2);
+    if (lp.kind === 'candle' || lp.kind === 'fire' || lp.kind === 'flame') return 0.8 + 0.2 * Math.sin(t * 13 + s) * Math.sin(t * 7.3 + s * 2);
     const n = Math.sin(t * 23 + s) * Math.sin(t * 3.1 + s) + Math.sin(t * 57 + s * 3) * 0.3;
     return n > 0.55 ? 0.08 : 0.85 + 0.15 * Math.sin(t * 40 + s);
   }

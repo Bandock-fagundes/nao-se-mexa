@@ -90,13 +90,18 @@ export class AudioEngine {
         break;
       }
       case 'land': this.noise(this.brown, t, 0.25, d, { type: 'lowpass', f: 400, gain: 0.9 * v }); this.tone(t, 0.18, d, { f: 70, f2: 40, gain: 0.6 * v }); this.creak(t + 0.05, d, 0.2 * v); break;
-      case 'cstep': { // passo pesado da criatura
-        this.tone(t, 0.35, d, { f: 52 + r() * 8, f2: 28, gain: 1.1 * v });
-        this.noise(this.brown, t, 0.4, d, { type: 'lowpass', f: 260, gain: 1.2 * v });
-        this.noise(this.white, t, 0.06, d, { f: 900, q: 2, gain: 0.25 * v });
-        if (r() < 0.35) this.creak(t + 0.08, d, 0.35 * v);
+      case 'cstep': { // passo pesado da criatura na madeira (v2 fase 2: calcanhar + tábua que ressoa + garras estalando)
+        this.tone(t, 0.42, d, { f: 48 + r() * 8, f2: 26, gain: 1.15 * v });                       // peso (sub-grave)
+        this.noise(this.brown, t, 0.45, d, { type: 'lowpass', f: 240, gain: 1.25 * v });          // baque surdo
+        const board = 120 + r() * 50;                                                              // a tábua vibra
+        this.tone(t + 0.005, 0.28, d, { f: board, f2: board * 0.82, gain: 0.32 * v, type: 'triangle' });
+        this.tone(t + 0.005, 0.18, d, { f: board * 2.7, f2: board * 2.2, gain: 0.08 * v });
+        this.noise(this.white, t, 0.05, d, { f: 900, q: 2, gain: 0.22 * v });
+        for (let i = 0; i < 3; i++) this.noise(this.white, t + 0.11 + i * (0.035 + r() * 0.02), 0.012, d, { f: 3200 + r() * 1500, q: 6, gain: 0.16 * v }); // garras na madeira: tec-tec-tec
+        if (r() < 0.45) this.creak(t + 0.09, d, 0.4 * v, 0.5 + r() * 0.5, 0.5 + r() * 0.4);
         break;
       }
+      case 'paper': this.noise(this.pink, t, 0.35, d, { f: 3200, q: 0.9, gain: 0.2 * v, a: 0.02 }); this.noise(this.white, t + 0.12, 0.15, d, { f: 5000, q: 1.2, gain: 0.08 * v, a: 0.01 }); break;
       case 'breath': { // respiração pesada da criatura (inspira/expira)
         const dur = opts.dur || 1.6;
         this.noise(this.pink, t, dur * 0.45, d, { f: 500, f2: 900, q: 0.7, gain: 0.5 * v, a: 0.4 });

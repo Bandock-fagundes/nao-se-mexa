@@ -10,6 +10,7 @@ import { buildHand, HandAnimator } from './render/hand.js';
 import { buildTeammate, animateTeammate } from './render/human.js';
 import { makeBeamCone } from './render/renderer.js';
 import { buildKey } from './render/props.js';
+import { storyPainting } from './story.js';
 import { LEVEL_INFO } from '../../shared/sound.js';
 
 // v2: marcadores vistos ATRAVÉS das paredes (sem teste de profundidade): porta de saída e "fantasminha"
@@ -345,7 +346,7 @@ export class Game {
     this.handAnim.update(dt, { speed: active ? (p.speed || 0) : 0, running: p.running, crouch: p.crouch, on: p.fl, yawVel, pitchVel, dead: !p.alive, stepPhase: (p.stepN || 0) + (p.stepAcc || 0) / (p.stride || 0.75) });
     // ----- animação de portas, recipientes, objetos -----
     this.animateWorld(dt);
-    this.updateXray(dt);
+    this.updateXray(dt); this.updateReader();
     this.drawWave();
     // ----- interação -----
     this.target = active && !this.paused ? this.findTarget() : null;
@@ -373,8 +374,11 @@ export class Game {
     this.audio.play('flashlight', null, { volume: 0.8 });
   }
   interact() {
+    if (this.reading) { this.closeReader(); return; }
     if (!this.target || !this.p.alive) return;
     const tg = this.target;
+    // v2 fase 2: ler bilhetes/livros e olhar quadros é só do lado do cliente (não faz barulho)
+    if (tg.kind === 'read' || tg.kind === 'painting') { this.openReader(tg); return; }
     this.handAnim.trigger('interact');
     if (tg.kind === 'exit' && !tg.can) { this.toast(tg.text, 'warn'); return; }
     // anti-repique: o mesmo alvo não é acionado de novo em menos de 0,45 s
@@ -427,6 +431,8 @@ export class Game {
     }
     if (!best) return null;
     const V = this.view;
+    if (best.kind === 'read') { const nt = this.view.notes[best.id].note; return { kind: 'read', id: best.id, text: `[E] Ler — ${nt.title}` }; }
+    if (best.kind === 'painting') return { kind: 'painting', id: best.id, text: `[E] Olhar o quadro — "${this.view.paintings[best.id].title}"` };
     if (best.kind === 'key') return { kind: 'key', req: 'key', id: null, key: best.key, text: '[E] Pegar chave' };
     if (best.kind === 'body') return { kind: 'body', req: 'body', id: best.id, text: `[E] Pegar as chaves de ${this.name(best.id)}` };
     if (best.kind === 'container') {
@@ -449,6 +455,34 @@ export class Game {
     }
     return null;
   }
+  // ---------------- v2 fase 2: leitor de bilhetes / quadros ----------------
+  // Abrir não pausa o jogo: ler parado no meio da casa é exatamente o tipo de risco que o jogo quer.
+  openReader(tg) {
+    const el = document.getElementById('reader'); if (!el) return;
+    el.className = '';
+    if (tg.kind === 'read') {
+      const nt = this.view.notes[tg.id].note;
+      el.classList.add('t-' + nt.type);
+      el.querySelector('.rd-title').textContent = nt.title;
+      el.querySelector('.rd-text').textContent = nt.text;
+      el.querySelector('.rd-img').style.display = 'none';
+      this.audio.play('paper', null, { volume: 0.5 });
+    } else {
+      const pt = this.view.paintings[tg.id];
+      el.classList.add('t-painting');
+      el.querySelector('.rd-title').textContent = pt.title;
+      el.querySelector('.rd-text').textContent = '';
+      const img = el.querySelector('.rd-img'); img.style.display = 'block';
+      const tx = storyPainting(pt.v); img.src = tx.image.toDataURL();
+    }
+    this.reading = { x: this.p.x, z: this.p.z, kind: tg.kind, id: tg.id };
+    const pr = document.getElementById('prompt'); if (pr) pr.style.visibility = 'hidden'; // o aviso [E] não aparece por trás do papel
+    this.app.stats.notes = (this.app.stats.notes || 0) + (tg.kind === 'read' ? 1 : 0);
+  }
+  closeReader() { const el = document.getElementById('reader'); if (el) el.className = 'hidden'; this.reading = null; const pr = document.getElementById('prompt'); if (pr) pr.style.visibility = ''; }
+  updateReader() { // fecha sozinho se você se afastar ou morrer
+    if (this.reading && (!this.p.alive || Math.hypot(this.p.x - this.reading.x, this.p.z - this.reading.z) > 1.2)) this.closeReader();
+  }
   // ---------------- v2: chaves, marcadores através das paredes, onda de som ----------------
   setupKey(k) {
     let kv = this.keyViews[k.id];
@@ -461,8 +495,20 @@ export class Game {
         kv = { id: k.id, mesh, spot: o, level: this.map.containers[o.c].level, part: pt };
       } else {
         const sf = this.map.surfaces[o.s];
-        mesh.position.set(sf.x, sf.y + 0.01, sf.z); mesh.rotation.set(-Math.PI / 2, 0, (sf.id * 1.7) % 6.28);
-        this.view.levels[sf.level].add(mesh);
+        mesh.rotation.set(-Math.PI / 2, 0, (sf.id * 1.7) % 6.28);
+        // v2 fase 2: a chave se APOIA no que estiver no tampo (livro, prato, papel) em vez de atravessar —
+        // raios de cima para baixo na argola, no meio e na ponta da chave; fica na maior altura encontrada
+        let top = sf.y;
+        const lvl = this.view.levels[sf.level]; lvl.updateMatrixWorld(true);
+        const rc = new THREE.Raycaster(); const ang = (sf.id * 1.7) % 6.28;
+        for (const u of [-0.02, 0.12, 0.3]) {
+          const px = sf.x + Math.cos(ang) * u, pz = sf.z - Math.sin(ang) * u;
+          rc.set(new THREE.Vector3(px, sf.y + 0.6, pz), new THREE.Vector3(0, -1, 0)); rc.far = 0.7;
+          const hit = rc.intersectObjects(lvl.children, true).find(h => h.object.isMesh && !h.object.isSprite);
+          if (hit && hit.point.y < sf.y + 0.12) top = Math.max(top, hit.point.y); // só itens baixos (livro, prato, papel)
+        }
+        mesh.position.set(sf.x, top + 0.004, sf.z);
+        lvl.add(mesh);
         kv = { id: k.id, mesh, spot: o, level: sf.level, part: null };
       }
       this.keyViews[k.id] = kv;

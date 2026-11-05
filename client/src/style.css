@@ -193,3 +193,22 @@ ul.keys { padding-left: 18px; }
 /* v2: onda de som (estilo rádio) — vermelho = muito alto, amarelo = médio, branco-acinzentado = baixo */
 #wave { position: absolute; left: 50%; bottom: 58px; transform: translateX(-50%); width: 260px; height: 56px; pointer-events: none; opacity: .9; filter: drop-shadow(0 0 4px rgba(0,0,0,.8)); }
 #hKeys .door { opacity: .75; font-size: .9em; }
+
+/* ---------- v2 fase 2: leitor de bilhetes / livros / quadros ---------- */
+#reader { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 30; }
+#reader.hidden { display: none; }
+#reader, #reader * { text-shadow: none; } /* o HUD tem sombra no texto: no papel ela borrava as letras */
+#reader .rd-paper { max-width: min(520px, 86vw); max-height: 78vh; overflow: hidden; padding: 28px 34px 18px; color: #2a2118;
+  background: radial-gradient(ellipse at 30% 20%, #e9dfc4, #cdbd96 70%, #b09c70); box-shadow: 0 10px 50px rgba(0,0,0,.85), inset 0 0 60px rgba(90,60,20,.45);
+  transform: rotate(-1.2deg); font-family: Georgia, "Times New Roman", serif; }
+#reader .rd-title { font-size: 15px; font-style: italic; opacity: .8; margin-bottom: 12px; border-bottom: 1px solid rgba(60,40,20,.3); padding-bottom: 6px; }
+#reader .rd-text { white-space: pre-wrap; font-size: 17px; line-height: 1.55; }
+#reader .rd-hint { margin-top: 14px; font: 12px monospace; opacity: .55; text-align: right; }
+#reader .rd-img { display: none; max-width: 100%; max-height: 56vh; margin: 0 auto; border: 10px solid #5a4020; box-shadow: inset 0 0 0 3px #b08a3a; }
+#reader.t-child .rd-paper { background: #ebe3cc; font-family: "Comic Sans MS", "Chalkboard SE", cursive; transform: rotate(2deg); }
+#reader.t-child .rd-text { color: #9a1414; font-size: 22px; letter-spacing: 1px; }
+#reader.t-news .rd-paper { background: #d6cfbb; font-family: "Times New Roman", serif; transform: rotate(0.6deg); }
+#reader.t-news .rd-text { column-count: 1; font-size: 15px; }
+#reader.t-book .rd-paper { background: linear-gradient(90deg, #d9cba6 0 49.6%, #8a7650 49.6% 50.4%, #d9cba6 50.4%); }
+#reader.t-diary .rd-text { background: repeating-linear-gradient(transparent 0 25px, rgba(60,70,140,.22) 25px 26px); font-family: "Brush Script MT", "Segoe Script", cursive, Georgia; font-size: 19px; }
+#reader.t-painting .rd-paper { background: #15100a; color: #d8c8a0; transform: none; }

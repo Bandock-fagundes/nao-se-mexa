@@ -65,9 +65,9 @@ function shelfBox(g, M, x, y, z) {
   const anchor = new THREE.Object3D(); anchor.position.set(0, 0.06, 0); box.add(anchor);
   return { part: lid, type: 'lid', amount: -1.8, anchor, label: 'caixa na prateleira' };
 }
-function books(g, M, w, y, depth, rnd, z0 = 0.02) {
-  let bx = -w / 2 + 0.04;
-  while (bx < w / 2 - 0.08) {
+function books(g, M, w, y, depth, rnd, z0 = 0.02, x0 = 0) { // x0: centro da faixa de livros
+  let bx = x0 - w / 2 + 0.04;
+  while (bx < x0 + w / 2 - 0.08) {
     const bw = 0.03 + rnd.next() * 0.05, bh = 0.22 + rnd.next() * 0.14;
     if (rnd.next() < 0.1) { bx += 0.08 + rnd.next() * 0.1; continue; }
     const m = B(g, bw, bh, depth, M.books, bx + bw / 2, y + bh / 2, z0, COLORS.books[rnd.int(0, COLORS.books.length - 1)]);
@@ -190,7 +190,13 @@ export function buildProp(kind, w, d, M, variant = 0) {
       for (let s = 0; s < n; s++) {
         const y = 0.06 + s * (H - 0.1) / n;
         B(g, W, 0.035, Dp, mat, 0, y, 0, metal ? 0xffffff : 0xffffff);
-        if (s === boxShelf) { boxRes = shelfBox(g, M, -W / 4 + (variant % 3) * 0.1, y + 0.02, 0.0); if (kind === 'bookshelf') books(g, M, W / 2 - 0.1, y + 0.02, 0.26, rnd, 0.02); continue; }
+        if (s === boxShelf) {
+          const bxc = -W / 4 + (variant % 3) * 0.1; boxRes = shelfBox(g, M, bxc, y + 0.02, 0.0);
+          // v2 fase 2: os livros desta prateleira ficam SÓ à direita da caixinha (antes a faixa começava no meio e atravessava a caixa)
+          const l0 = bxc + 0.175 + 0.03, l1 = W / 2 - 0.03;
+          if (kind === 'bookshelf' && l1 - l0 > 0.16) books(g, M, l1 - l0, y + 0.02, 0.26, rnd, 0.02, (l0 + l1) / 2);
+          continue;
+        }
         if (kind === 'bookshelf') books(g, M, W, y + 0.02, 0.26, rnd);
         else if (kind === 'winerack') { for (let x = -W / 2 + 0.1; x < W / 2 - 0.05; x += 0.11) C(g, 0.035, 0.035, 0.3, M.bottleGlass, x, y + 0.06, 0.02, 0xffffff, 8, Math.PI / 2); }
         else if (kind === 'mshelf') { for (let x = -W / 2 + 0.15; x < W / 2 - 0.1; x += 0.28 + rnd.next() * 0.1) { if (rnd.next() < 0.5) B(g, 0.22, 0.18, 0.28, M.paper, x, y + 0.1, 0, 0x8a7a5a); else C(g, 0.07, 0.07, 0.16, M.metal, x, y + 0.1, 0, 0x6a7a8a, 10); } }
@@ -424,7 +430,9 @@ export function buildKey(M) {
   const orn = new THREE.Mesh(new THREE.TorusGeometry(0.018, 0.004, 6, 12), gm); orn.position.x = 0; g.add(orn);
   g.scale.setScalar(2.1);
   // halo aditivo discreto
-  const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d'); const gr = x.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, 'rgba(255,255,255,0.95)'); gr.addColorStop(0.35, 'rgba(235,240,255,0.35)'); gr.addColorStop(1, 'rgba(220,230,255,0)'); // v2: brilho BRANCO x.fillStyle = gr; x.fillRect(0, 0, 64, 64);
+  const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d'); const gr = x.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, 'rgba(255,255,255,0.95)'); gr.addColorStop(0.35, 'rgba(235,240,255,0.35)'); gr.addColorStop(1, 'rgba(220,230,255,0)'); x.fillStyle = gr; x.fillRect(0, 0, 64, 64); // v2: brilho BRANCO (fase 2: o preenchimento estava comentado por engano — o halo era invisível)
+  // raios finos em cruz (estrela de brilho) — a chave "cintila" quando a lanterna passa
+  x.globalCompositeOperation = 'lighter'; for (const [w, h] of [[64, 3], [3, 64]]) { const lg = x.createLinearGradient(32 - w / 2, 32 - h / 2, 32 + w / 2, 32 + h / 2); lg.addColorStop(0, 'rgba(255,255,255,0)'); lg.addColorStop(0.5, 'rgba(255,255,255,0.8)'); lg.addColorStop(1, 'rgba(255,255,255,0)'); x.fillStyle = lg; x.fillRect(32 - w / 2, 32 - h / 2, w, h); }
   const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.45 }));
   halo.scale.set(0.26, 0.26, 1); halo.position.set(0.08, 0, 0.03); g.add(halo); g.userData.halo = halo;
   // ergue a chave acima do fundo do recipiente (o +Z local vira 'para cima' quando deitada)
