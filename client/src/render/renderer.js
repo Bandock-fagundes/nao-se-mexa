@@ -104,7 +104,7 @@ export class Renderer {
     this.upQuad = new FullScreenQuad(this.upMat);
     // estado da resolução dinâmica
     this.scale = settings.resScale || 1; this.out = { w: 1, h: 1 }; this.rw = 1; this.rh = 1;
-    this.dyn = { acc: 0, n: 0, sum: 0, lastT: 0, upHold: 2, sinceUp: 99, sinceChange: 0, okT: 0, refresh: 1000 / 60, dts: [] };
+    this.dyn = { acc: 0, lastT: 0, upHold: 2, sinceUp: 99, sinceChange: 0, okT: 0, ceil: 1, ceilT: 0, ceilHold: 7.5, refresh: 1000 / 60, dts: [] };
     this.frameStats = { fps: 0, ms: 0, calls: 0, tris: 0 }; this.fpsAcc = { t: 0, n: 0 };
     this.renderer.info.autoReset = false;
     this.buildComposer();
@@ -144,7 +144,7 @@ export class Renderer {
     this.camera.fov = settings.fov || 72; this.handCam.fov = this.camera.fov;
     if (prevQ !== this.q) { this.composer.dispose?.(); this.buildComposer(); this.renderer.shadowMap.needsUpdate = true; this.onQualityChange && this.onQualityChange(this.q); }
     if (!settings.dynRes) this.scale = settings.resScale || 1;
-    this.dyn.upHold = 2; this.dyn.sinceChange = 0;
+    this.dyn.ceilT = 0; this.dyn.ceilHold = 7.5; this.dyn.sinceChange = 0; // configuração mudou: pode testar de novo
     this.resize();
   }
   // resolução de saída (canvas) e a maior resolução de render permitida pelo preset
@@ -193,27 +193,36 @@ export class Renderer {
   updateDynamic(now) {
     const D = this.dyn, st = this.settings;
     const dt = D.lastT ? now - D.lastT : 0; D.lastT = now;
-    if (!dt || dt > 250) return; // pausa, aba escondida, carregamento: ignora
-    D.dts.push(dt); D.acc += dt;
+    if (!dt || dt > 2500) return; // aba escondida (o rAF para), carregamento: ignora
+    const d = Math.min(dt, 250); // um engasgo isolado não derruba a escala de uma vez
+    D.dts.push(d); D.acc += d;
     if (D.acc < 500) return;
     // período da tela (vsync): menor mediana já vista — 60 Hz, 144 Hz…
     const sorted = D.dts.slice().sort((a, b) => a - b), med = sorted[sorted.length >> 1];
-    D.refresh = Math.max(1000 / 240, Math.min(D.refresh * 1.002, med));
+    D.refresh = Math.max(1000 / 240, Math.min(D.refresh, med));
     const avg = D.acc / D.dts.length; D.dts.length = 0; D.acc = 0;
     if (!st.dynRes || st.preserve) return;
     const t = st.fpsTarget ?? 60, target = Math.max(t ? 1000 / t : D.refresh, D.refresh * 0.98);
     const minS = this.q.minScale;
     D.sinceUp += 0.5; D.sinceChange += 0.5;
     let s = this.scale;
+    if (D.ceilT > 0) D.ceilT -= 0.5;
     if (avg > target * 1.1) {
-      // lento: desce proporcional (custo ∝ pixels ∝ escala²), no mínimo um degrau
-      s = Math.min(s - 0.05, s * Math.sqrt(target / avg));
-      if (D.sinceUp < 3) D.upHold = Math.min(16, D.upHold * 2); // a subida anterior não coube: espera mais da próxima vez
+      if (D.sinceUp < 3) {
+        // a subida que acabamos de fazer não coube: volta um degrau e marca um "teto" que só é testado de novo
+        // depois de 15 s, 30 s, 60 s… (até 2 min) — é isso que evita o sobe-desce
+        D.ceil = s; D.ceilHold = Math.min(120, (D.ceilHold || 7.5) * 2); D.ceilT = D.ceilHold;
+        s -= 0.05; D.sinceUp = 99;
+      } else {
+        // ficou lento por outro motivo (cena mais pesada): desce proporcional (custo ∝ escala²), 1 a 3 degraus
+        s = Math.max(s - 0.15, Math.min(s - 0.05, s * Math.sqrt(target / avg)));
+      }
       D.okT = 0;
     } else if (avg < target * 1.04) {
       D.okT += 0.5;
-      if (D.okT >= D.upHold && s < 1) { s += 0.05; D.sinceUp = 0; D.okT = 0; }
-      if (D.sinceChange > 30) D.upHold = Math.max(2, D.upHold / 2); // estável há tempo: volta a testar mais cedo
+      const blocked = D.ceilT > 0 && s + 0.05 >= D.ceil - 1e-6;
+      if (D.okT >= D.upHold && s < 1 && !blocked) { s += 0.05; D.sinceUp = 0; D.okT = 0; }
+      if (D.sinceChange > 60) D.ceilHold = Math.max(7.5, (D.ceilHold || 7.5) / 2); // estável há tempo: volta a testar mais cedo
     } else D.okT = 0;
     s = Math.round(Math.min(1, Math.max(minS, s)) * 20) / 20;
     if (s !== this.scale) { this.scale = s; D.sinceChange = 0; this.applyScale(false); }

@@ -93,7 +93,7 @@ export function capsule(a, b, r0, r1, mat, seg = 18, phalanx = false) {
       // e as pontas mais largas como os nós; sem a "barriga" que deixava os dedos com cara de salsicha
       const e0 = Math.min(1, t * len / (r0 * 0.55)), e1 = Math.min(1, (1 - t) * len / (r1 * 0.55));
       r *= Math.pow(Math.max(0, 1 - Math.pow(1 - e0, 2)), 0.35) * Math.pow(Math.max(0, 1 - Math.pow(1 - e1, 2)), 0.35);
-      r *= 1 - 0.13 * Math.sin(t * Math.PI);
+      r *= 1 - 0.17 * Math.sin(t * Math.PI);
     } else {
     // pontas arredondadas (hemisférios) — leve "barriga" no meio como peça torneada
     const e0 = Math.min(1, t * len / r0), e1 = Math.min(1, (1 - t) * len / r1);
@@ -244,7 +244,12 @@ export function buildHand(M) {
       const a = joints[k], b = joints[k + 1], dirv = b.clone().sub(a).normalize();
       const gap = rs[k] * 0.12;
       const a2 = a.clone().addScaledVector(dirv, k === 0 ? 0 : gap), b2 = b.clone().addScaledVector(dirv, k === 2 ? 0 : -gap);
-      f.add(k === 2 ? capsule(a2, b2, rs[k], rs[k] * 0.72, wood) : capsule(a2, b2, rs[k], rs[k] * 0.9, wood, 18, true));
+      const seg = k === 2 ? capsule(a2, b2, rs[k], rs[k] * 0.72, wood) : capsule(a2, b2, rs[k], rs[k] * 0.84, wood, 18, true);
+      // v4: seção oval (mais larga que alta) — achata na direção radial do cano, como um dedo de verdade
+      { const ax = dirv, rad = V((a2.x + b2.x) / 2, (a2.y + b2.y) / 2, 0).normalize(); rad.addScaledVector(ax, -rad.dot(ax)).normalize();
+        const lx = V(1, 0, 0).applyQuaternion(seg.quaternion); const ang = Math.atan2(lx.clone().cross(rad).dot(ax), lx.dot(rad));
+        seg.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(ax, ang)); seg.scale.set(0.8, 1, 1.08); }
+      f.add(seg);
       if (k > 0) f.add(hinge(a, rs[k - 1] * 0.66, V(0, 0, 1), woodJ, pin));
     }
     f.add(hinge(joints[0], d.r * 0.8, V(0, 0, 1), woodJ, pin)); // nó do dedo
