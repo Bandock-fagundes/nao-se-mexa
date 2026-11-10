@@ -20,6 +20,7 @@ const log = (...a) => console.log('[v3-shots]', ...a);
 const CELL = 0.5;
 async function shot(pg, file, wait = 1800) {
   await pg.evaluate(() => { window.__app.noRender = false; });
+  if (process.env.PRE_EVAL) await pg.evaluate(process.env.PRE_EVAL); // depuração (ex.: desligar o recorte por frustum)
   await sleep(wait);
   await pg.screenshot({ path: path.join(OUT, file) });
   log('captura', file);

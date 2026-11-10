@@ -82,16 +82,24 @@ export function dollWoodMaterial(tint = 0xffffff, rough = 0.5) {
 }
 
 // cápsula entalhada entre dois pontos (raios r0 → r1)
-export function capsule(a, b, r0, r1, mat, seg = 18) {
+export function capsule(a, b, r0, r1, mat, seg = 18, phalanx = false) {
   const len = a.distanceTo(b);
-  const pts = [], n = 14;
+  const pts = [], n = phalanx ? 20 : 14;
   for (let i = 0; i <= n; i++) {
     const t = i / n;
     let r = r0 + (r1 - r0) * t;
+    if (phalanx) {
+      // v4: falange de boneco — pontas achatadas (arredondam só no último ~0,55 r), cintura fina no meio
+      // e as pontas mais largas como os nós; sem a "barriga" que deixava os dedos com cara de salsicha
+      const e0 = Math.min(1, t * len / (r0 * 0.55)), e1 = Math.min(1, (1 - t) * len / (r1 * 0.55));
+      r *= Math.pow(Math.max(0, 1 - Math.pow(1 - e0, 2)), 0.35) * Math.pow(Math.max(0, 1 - Math.pow(1 - e1, 2)), 0.35);
+      r *= 1 - 0.13 * Math.sin(t * Math.PI);
+    } else {
     // pontas arredondadas (hemisférios) — leve "barriga" no meio como peça torneada
     const e0 = Math.min(1, t * len / r0), e1 = Math.min(1, (1 - t) * len / r1);
     r *= Math.sqrt(Math.max(0, 1 - Math.pow(1 - e0, 2))) * Math.sqrt(Math.max(0, 1 - Math.pow(1 - e1, 2)));
     r *= 1 + 0.05 * Math.sin(t * Math.PI);
+    }
     pts.push(new THREE.Vector2(Math.max(0.00005, r), t * len));
   }
   const geo = new THREE.LatheGeometry(pts, seg);
@@ -230,12 +238,13 @@ export function buildHand(M) {
       if (k === 2) { const rq = Math.hypot(q.x, q.y); const want = R + d.r * 0.82; q.x *= want / rq; q.y *= want / rq; } // ponta pressionando
       joints.push(q); p = q;
     }
-    const rs = [d.r * 1.0, d.r * 0.93, d.r * 0.86];
+    // v4: afinam mais até a ponta (proximal → distal) e encostam mais nas juntas
+    const rs = [d.r * 1.0, d.r * 0.88, d.r * 0.78];
     for (let k = 0; k < 3; k++) {
       const a = joints[k], b = joints[k + 1], dirv = b.clone().sub(a).normalize();
-      const gap = rs[k] * 0.22;
+      const gap = rs[k] * 0.12;
       const a2 = a.clone().addScaledVector(dirv, k === 0 ? 0 : gap), b2 = b.clone().addScaledVector(dirv, k === 2 ? 0 : -gap);
-      f.add(capsule(a2, b2, rs[k], k === 2 ? rs[k] * 0.92 : rs[k] * 0.96, wood));
+      f.add(k === 2 ? capsule(a2, b2, rs[k], rs[k] * 0.72, wood) : capsule(a2, b2, rs[k], rs[k] * 0.9, wood, 18, true));
       if (k > 0) f.add(hinge(a, rs[k - 1] * 0.66, V(0, 0, 1), woodJ, pin));
     }
     f.add(hinge(joints[0], d.r * 0.8, V(0, 0, 1), woodJ, pin)); // nó do dedo

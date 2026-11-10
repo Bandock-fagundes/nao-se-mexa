@@ -100,14 +100,21 @@ function buildClothes(M, innerW, innerD, railY, rnd, variant, coatsOnly) {
     const len = type === 'coat' ? 0.95 + rnd.next() * 0.22 : type === 'dress' ? 1.08 + rnd.next() * 0.2 : 0.6 + rnd.next() * 0.12;
     const thick = type === 'coat' ? 0.085 : type === 'dress' ? 0.06 : 0.045;
     const col = CLOTH_COLORS[(variant * 3 + i * 7 + rnd.int(0, 9)) % CLOTH_COLORS.length];
-    const geo = new THREE.BoxGeometry(thick, len, sh, 3, 12, 6);
-    const pos = geo.attributes.position, ph = rnd.next() * 6;
+    const geo = new THREE.BoxGeometry(thick, len, sh, 4, 16, 10);
+    const pos = geo.attributes.position, ph = rnd.next() * 6, tw = (rnd.next() - 0.5) * 0.5;
     for (let k = 0; k < pos.count; k++) {
       let px = pos.getX(k); const py = pos.getY(k); let pz = pos.getZ(k);
       const f = (len / 2 - py) / len; // 0 = ombro, 1 = barra
       const widen = type === 'dress' ? 1 + f * 0.45 : type === 'coat' ? 1 + f * 0.1 : 1;
+      const u = pz / (sh / 2); // -1 (fundo do armário) … +1 (frente)
+      // v4: seção arredondada (mais cheia no meio, fina nas bordas) — não parece mais uma placa
+      px *= 0.45 + 0.55 * Math.cos(Math.min(1, Math.abs(u)) * Math.PI / 2);
       pz *= widen * (f < 0.1 ? 0.72 + f * 2.8 : 1);                 // ombros caídos
       px += Math.sin(pz * 34 + ph) * 0.011 * (0.35 + f) + Math.sin(py * 9 + ph) * 0.004; // dobras do tecido
+      // v4: barra ondulada e caimento curvo (a peça "barriga" um pouco e torce de leve até a barra)
+      pz += Math.sin(py * 13 + ph) * 0.012 * f * Math.abs(u);
+      px += Math.sin(u * 1.6 + ph) * 0.018 * f;
+      { const a = tw * f, c = Math.cos(a), s2 = Math.sin(a); const x2 = px * c - pz * s2; pz = px * s2 + pz * c; px = x2; }
       if (type !== 'dress' && Math.abs(pz) > sh * 0.38 && f > 0.08 && f < 0.75) px *= 1.25; // mangas mais grossas nas bordas
       pos.setXYZ(k, px, py, Math.max(-innerD / 2 + 0.008, Math.min(innerD / 2 - 0.008, pz)));
     }
@@ -227,9 +234,14 @@ export function buildProp(kind, w, d, M, variant = 0) {
       B(p, bigW - 0.06, bigH - 0.06, 0.008, mat, 0, 0, 0.017, 0xb09078);
       for (const sx of [-0.28, 0.28]) { knob(p, M, sx * bigW, 0, 0.028); }
       B(p, 0.035, 0.05, 0.004, M.brass, 0, 0, 0.022, 0xb08a3a);
-      B(p, bigW - 0.04, bigH - 0.03, Dp - 0.08, M.black, 0, 0, -Dp / 2 + 0.01);
-      B(p, bigW - 0.05, 0.008, Dp - 0.09, M.wood, 0, -bigH / 2 + 0.02, -Dp / 2 + 0.01, 0x5a3a24);
-      const an = new THREE.Object3D(); an.position.set(0, -bigH / 2 + 0.03, -0.12); p.add(an);
+      // v4: caixa da gaveta ABERTA por cima (fundo + laterais + traseira em madeira) — antes era um bloco preto
+      // maciço e, olhando de cima, aparecia a tampa dele como uma faixa cinza lisa
+      { const iw = bigW - 0.04, ih = bigH - 0.03, idp = Dp - 0.08, zc = -Dp / 2 + 0.01, t = 0.012;
+        B(p, iw, t, idp, M.wood, 0, -ih / 2 + t / 2, zc, 0x6a4a30);                       // fundo
+        for (const sx of [-1, 1]) B(p, t, ih, idp, M.wood, sx * (iw / 2 - t / 2), 0, zc, 0x4a3020); // laterais
+        B(p, iw, ih, t, M.wood, 0, 0, zc - idp / 2 + t / 2, 0x3a2416);                    // traseira
+        B(p, iw - 2 * t, 0.006, idp - 0.03, M.fabric, 0, -ih / 2 + t + 0.003, zc, 0x4a1a1c); } // forro de feltro
+      const an = new THREE.Object3D(); an.position.set(0, -bigH / 2 + 0.04, -0.12); p.add(an); // v4: +1 cm (chave sobre o forro novo)
       // gavetinhas decorativas: 2 fileiras × 4 (ou 3 se for estreita), fixas
       const cols = W > 1.2 ? 4 : 3, rows = 2, gy0 = 0.17, gy1 = yTop - bigH / 2 - 0.035;
       const cw = (W - 0.08) / cols, rh = (gy1 - gy0) / rows;

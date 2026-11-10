@@ -52,6 +52,7 @@ A aba de testes fica em `http://localhost:3000/testar`.
 | E | interagir (ler bilhetes/livros, olhar quadros, portas, cada gaveta, armários, baús, caixas, prateleiras, chave, colocar chaves na saída, corpo com chaves, derrubar objetos) |
 | F | liga/desliga a lanterna |
 | Esc | pausa (o mundo **não** para — a criatura continua andando) |
+| F3 | mostra/esconde FPS e resolução de render |
 
 ## A lanterna (regra exata)
 
@@ -89,9 +90,24 @@ durante a partida e criar salas multiplayer de teste.
 
 ## Configurações (salvas no navegador)
 
-Qualidade gráfica (**Baixa**: sem sombras, sem bloom, resolução 0,75×, mapas de 256 px · **Média**: sombras 1024,
-bloom · **Alta**: sombras 2048, bloom, SSAO, resolução até 1,5×), resolução, volume geral/efeitos/ambiente,
-sensibilidade do mouse, campo de visão e inverter eixo vertical. Estatísticas (partidas, vitórias, mortes, fases
+Qualidade gráfica (**Baixa**: sem sombras, sem bloom, sem AA, render até 1280×720, mapas de 256 px · **Média**: sombras
+1024, bloom, FXAA, render até 1920×1080 · **Alta**: sombras 2048, bloom, SSAO, SMAA, render até 2560×1440 · **Ultra (4K)**:
+como a Alta + render até 3840×2160, mapas de 1024 px e 10 luzes), volume geral/efeitos/ambiente, sensibilidade do mouse,
+campo de visão e inverter eixo vertical.
+
+**Imagem "estilo DLSS" (v4).** No navegador não existe DLSS de verdade; o jogo faz o equivalente honesto em WebGL:
+- **Resolução dinâmica** (ligada por padrão): a cena 3D é desenhada numa imagem menor que a tela (entre 50–60% e 100%,
+  conforme o preset) e a escala se ajusta a cada ~0,5 s para segurar o **FPS alvo** (30 / 60 / 120 / sem limite). Tem
+  histerese: se uma subida não couber, espera cada vez mais antes de tentar de novo, para não ficar oscilando.
+- **Upscale + nitidez estilo FSR 1:** a imagem é ampliada para a resolução da tela com filtro bicúbico (Catmull-Rom) com
+  anti-halo, e recebe nitidez adaptativa ao contraste (fórmula do RCAS da AMD). O **FXAA/SMAA** roda antes, na resolução
+  de render. HUD e menus continuam sempre na resolução nativa.
+- **Resolução máxima:** 1080p / 1440p / 4K / nativa do monitor (limita o tamanho da imagem final;
+  escolher Ultra com 1080p/1440p selecionado passa para 4K; nunca renderiza acima da tela). **Nitidez:** 0–100% (padrão 50%). **Escala de renderização:** fixa, só vale com a dinâmica desligada.
+- **F3** (ou "Mostrar FPS e resolução" nas configurações) mostra FPS, ms por quadro, resolução de render → tela,
+  draw calls e triângulos.
+
+Estatísticas (partidas, vitórias, mortes, fases
 concluídas, tempo sobrevivido) também ficam no `localStorage`.
 
 ## Testes
