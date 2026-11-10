@@ -1,5 +1,5 @@
 // Constantes compartilhadas entre servidor e cliente.
-export const GEN_VERSION = 5;
+export const GEN_VERSION = 6; // v3 (jam): planta nova — hall central com escadaria, alas de cômodos interligados, tamanho por nº de jogadores
 export const FALLBACK_SEED = 'casa-fallback-1';
 
 export const CELL = 0.5;      // metros por célula da grade
@@ -15,6 +15,9 @@ export const ROWS = {
 export const STAIR_LEN = 12;  // 6 m de rampa
 export const STAIR_W = 3;     // 1,5 m de largura
 export const STAIR_SLOT = 7;  // escada (3) + parede de apoio (1) + passagem (3)
+export const GRAND_STAIR_W = 6; // v3: escadaria principal do hall (3 m de largura)
+// v3: tamanho da mansão por número de jogadores (1 = compacta, 2 = média, 3 = grande) — largura em células
+export const MANSION_SIZES = { 1: [58, 62], 2: [68, 72], 3: [78, 82] };
 
 export const LEVELS = [
   { id: 0, key: 'basement', name: 'Porão', y: -3.6, h: 3.0 },
@@ -28,10 +31,14 @@ export const T = { VOID: 0, FLOOR: 1, WALL: 2, DOOR: 3, STAIR: 4, LOW: 5, TALL: 
 
 export const PHASES = {
   // v2: sempre 3 chaves por casa (depositadas na porta por qualquer jogador, em parcelas)
-  1: { keys: 3, vision: true, hearing: false, smell: false, title: 'FASE 1 — A CRIATURA VÊ' },
-  2: { keys: 3, vision: true, hearing: true, smell: false, title: 'FASE 2 — A CRIATURA ESCUTA' },
-  3: { keys: 3, vision: true, hearing: true, smell: true, title: 'FASE 3 — A CRIATURA FAREJA' },
+  1: { keys: 3, vision: true, hearing: false, smell: false, title: 'FASE 1 — A CRIATURA VÊ', wake: ['FASE 1 — ELE VÊ.', 'Não se mexa quando ele estiver perto.'] },
+  2: { keys: 3, vision: true, hearing: true, smell: false, title: 'FASE 2 — A CRIATURA ESCUTA', wake: ['FASE 2 — ELE OUVE.', 'Faça o mínimo de barulho.'] },
+  3: { keys: 3, vision: true, hearing: true, smell: true, title: 'FASE 3 — A CRIATURA FAREJA', wake: ['FASE 3 — ELE SENTE SEU CHEIRO.', 'Ele vai te farejar.'] },
 };
+export const MAX_PHASE = 3;
+// v3: cena "acordando" no início de cada fase. O servidor espera todos carregarem (até waitMax s), manda 'go'
+// e congela a partida (criatura parada, ninguém se move nem morre) durante 'seconds'.
+export const WAKE = { seconds: 8, waitMax: 25 };
 
 export const PLAYER = {
   radius: 0.24,

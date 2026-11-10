@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { buildMaterials } from './render/materials.js';
 import { buildCreature } from './render/creature.js';
 import { buildHand, HandAnimator } from './render/hand.js';
-import { buildProp } from './render/props.js';
+import { buildProp, buildKey } from './render/props.js';
 import { buildTeammate, animateTeammate } from './render/human.js';
 const q = new URLSearchParams(location.search);
 const view = q.get('v') || 'creature';
@@ -49,8 +49,22 @@ if (view === 'creature') {
   for (let i = 0; i < n; i++) animateTeammate(t, 1 / 60, { speed: sp, crouch: !!q.get('c'), alive: q.get('dead') ? false : true, fl: true, pitch: +(q.get('p') || 0) });
   cam.position.set(+(q.get('cx') || 0), +(q.get('cy') || 1.2), +(q.get('cz') || 3.6)); cam.lookAt(0, +(q.get('ly') || 0.95), 0);
 } else {
-  const g = buildProp(view, +(q.get('w') || 1.5), +(q.get('d') || 0.5), M, 1); scene.add(g);
-  cam.position.set(2, 1.6, 3); cam.lookAt(0, 0.8, 0);
+  const g = buildProp(view, +(q.get('w') || 1.5), +(q.get('d') || 0.5), M, +(q.get('var') || 1)); scene.add(g);
+  // v3: ?open=1 abre portas/gavetas; &key=1 mostra o armário da chave (vazio, chave no ganchinho)
+  if (q.get('open') && g.userData.parts) for (const pt of g.userData.parts) {
+    if (pt.type === 'door') { pt.part.rotation.y = pt.amount * 0.9; if (pt.extra) pt.extra.rotation.y = -pt.amount * 0.85; }
+    else if (pt.type === 'drawer') pt.part.position.z += pt.amount;
+    else if (pt.type === 'lid') pt.part.rotation.x = pt.amount;
+  }
+  if (q.get('key') && g.userData.parts) {
+    const pt = g.userData.parts[0], k = buildKey(M);
+    if (pt.hang) { k.rotation.set(0, 0, -Math.PI / 2); if (g.userData.hook) g.userData.hook.visible = true; if (g.userData.clothes) g.userData.clothes.removeFromParent(); }
+    else k.rotation.set(-Math.PI / 2, 0, 0.6);
+    pt.anchor.add(k); k.userData.halo.visible = true; k.userData.halo.material.opacity = 0.8; k.userData.halo.scale.set(0.1, 0.1, 1);
+    M.keyGold.emissiveIntensity = 0.9;
+  }
+  cam.position.set(+(q.get('cx') || 2), +(q.get('cy') || 1.6), +(q.get('cz') || 3)); cam.lookAt(+(q.get('lx') || 0), +(q.get('ly') || 0.8), +(q.get('lz') || 0));
+  if (q.get('fov')) { cam.fov = +q.get('fov'); cam.updateProjectionMatrix(); }
 }
 if (q.get('mood')) {
   // clima do jogo: escuro, lanterna saindo da câmera, luz quente fraca ao fundo

@@ -122,6 +122,8 @@ export class Creature {
     this.sweep = { room: -1, pts, i: -1, pause: this.rng.float(0.3, 0.8), inspected: true, check: true };
     this.setState('check');
     this.path = null;
+    // v3: a conferida em volta é deslocamento novo — o "vigia de travamento" não herda a pausa da inspeção anterior
+    if (pts.length) this.stillT = Math.min(this.stillT || 0, 1.5);
   }
   onSound(ev) { this.pendingSounds.push(ev); }
   processSounds() {

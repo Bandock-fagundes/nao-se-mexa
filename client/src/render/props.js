@@ -1,6 +1,7 @@
 // Móveis, recipientes, objetos derrubáveis e a chave. Frente local = +Z; origem no chão, centro da pegada.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { makeRng } from '../../../shared/rng.js';
 
 export function tint(geo, hex) {
@@ -28,8 +29,9 @@ export function S(g, r, mat, x, y, z, color, sx = 1, sy = 1, sz = 1, seg = 12) {
   const m = mesh(new THREE.SphereGeometry(r, seg, Math.max(6, seg * 0.75 | 0)), mat, color); m.position.set(x, y, z); m.scale.set(sx, sy, sz); g.add(m); return m;
 }
 // dyn: parte móvel única (porta de armário, tampa de baú…). dynParts (v2): várias partes independentes (gavetas)
-const dyn = (g, o) => { o.part.userData.dynamic = true; g.userData.dyn = o; g.userData.parts = [o]; return g; };
-const dynParts = (g, list) => { for (const o of list) o.part.userData.dynamic = true; g.userData.dyn = list[0]; g.userData.parts = list; return g; };
+// v3: a segunda folha (extra) também é móvel — sem isso ela era fundida na malha estática e não abria
+const dyn = (g, o) => { o.part.userData.dynamic = true; if (o.extra) o.extra.userData.dynamic = true; g.userData.dyn = o; g.userData.parts = [o]; return g; };
+const dynParts = (g, list) => { for (const o of list) { o.part.userData.dynamic = true; if (o.extra) o.extra.userData.dynamic = true; } g.userData.dyn = list[0]; g.userData.parts = list; return g; };
 const knob = (g, M, x, y, z) => S(g, 0.018, M.brass, x, y, z, 0xffffff, 1, 1, 1, 8);
 
 const COLORS = { cloth: [0x5a1416, 0x1e3a2a, 0x2a2a40, 0x4a3a20, 0x3a1a2a], books: [0x5a1a14, 0x1a3a24, 0x1a2440, 0x4a3a1a, 0x2a1a10, 0x3a3a30, 0x601818, 0x203018] };
@@ -84,6 +86,55 @@ function jars(g, M, w, y, rnd) {
   }
 }
 
+// v3: roupas penduradas no cabideiro — casacos, vestidos e camisas com dobras de tecido e cabides de madeira.
+// Tudo vira 2 malhas (tecido + cabides), coloridas por vértice: pouco custo de desenho por armário.
+const CLOTH_COLORS = [0x6a1a20, 0x24402e, 0x232a48, 0x6e5a30, 0x34302c, 0x9a8e78, 0x4a3048, 0x7a3020, 0x34444c, 0x5a2a2a, 0x2a3a2a];
+function buildClothes(M, innerW, innerD, railY, rnd, variant, coatsOnly) {
+  const g = new THREE.Group();
+  const n = Math.max(3, Math.min(9, Math.floor(innerW / 0.115)));
+  const cloth = [], wood = [];
+  const step = innerW / n, sh = Math.min(innerD - 0.03, 0.36);
+  for (let i = 0; i < n; i++) {
+    const xx = -innerW / 2 + step * (i + 0.5) + (rnd.next() - 0.5) * 0.025;
+    const type = coatsOnly ? (rnd.next() < 0.75 ? 'coat' : 'shirt') : ['coat', 'dress', 'shirt', 'coat', 'dress', 'shirt'][rnd.int(0, 5)];
+    const len = type === 'coat' ? 0.95 + rnd.next() * 0.22 : type === 'dress' ? 1.08 + rnd.next() * 0.2 : 0.6 + rnd.next() * 0.12;
+    const thick = type === 'coat' ? 0.085 : type === 'dress' ? 0.06 : 0.045;
+    const col = CLOTH_COLORS[(variant * 3 + i * 7 + rnd.int(0, 9)) % CLOTH_COLORS.length];
+    const geo = new THREE.BoxGeometry(thick, len, sh, 3, 12, 6);
+    const pos = geo.attributes.position, ph = rnd.next() * 6;
+    for (let k = 0; k < pos.count; k++) {
+      let px = pos.getX(k); const py = pos.getY(k); let pz = pos.getZ(k);
+      const f = (len / 2 - py) / len; // 0 = ombro, 1 = barra
+      const widen = type === 'dress' ? 1 + f * 0.45 : type === 'coat' ? 1 + f * 0.1 : 1;
+      pz *= widen * (f < 0.1 ? 0.72 + f * 2.8 : 1);                 // ombros caídos
+      px += Math.sin(pz * 34 + ph) * 0.011 * (0.35 + f) + Math.sin(py * 9 + ph) * 0.004; // dobras do tecido
+      if (type !== 'dress' && Math.abs(pz) > sh * 0.38 && f > 0.08 && f < 0.75) px *= 1.25; // mangas mais grossas nas bordas
+      pos.setXYZ(k, px, py, Math.max(-innerD / 2 + 0.008, Math.min(innerD / 2 - 0.008, pz)));
+    }
+    geo.computeVertexNormals();
+    geo.rotateY((rnd.next() - 0.5) * 0.22);
+    geo.translate(xx, railY - 0.075 - len / 2, 0);
+    tint(geo, col); cloth.push(geo);
+    if (type === 'coat') { const lap = new THREE.BoxGeometry(thick + 0.006, len * 0.35, 0.05, 1, 1, 1); lap.translate(xx, railY - 0.075 - len * 0.2, sh * 0.42); tint(lap, col === 0xb8ae98 ? 0x8a8070 : 0x1a1410); cloth.push(lap); }
+    const bar = new THREE.BoxGeometry(0.014, 0.02, sh * 0.96); bar.translate(xx, railY - 0.06, 0); tint(bar, 0x6a4a30); wood.push(bar);
+    const hk = new THREE.TorusGeometry(0.017, 0.0028, 4, 10, Math.PI * 1.3); hk.rotateY(Math.PI / 2); hk.rotateX(-0.4); hk.translate(xx, railY + 0.004, 0); tint(hk, 0x9a8a68); wood.push(hk);
+  }
+  const mc = new THREE.Mesh(mergeGeometries(cloth, false), M.fabric); mc.castShadow = true; mc.receiveShadow = true; g.add(mc);
+  const mw = new THREE.Mesh(mergeGeometries(wood, false), M.wood); g.add(mw);
+  return g;
+}
+
+// v3: UV em escala de mundo nas caixas de madeira envelhecida (o veio não estica num painel de 2 m)
+function woodUV(g, mat, tile = 0.75) {
+  g.traverse(o => {
+    if (!o.isMesh || o.material !== mat || !o.geometry.parameters || o.geometry.type !== 'BoxGeometry' || o.userData.wuv) return;
+    const { width: w, height: h, depth: d } = o.geometry.parameters, uv = o.geometry.attributes.uv;
+    const dims = [[d, h], [d, h], [w, d], [w, d], [w, h], [w, h]];
+    const per = uv.count / 6;
+    for (let f = 0; f < 6; f++) for (let i = 0; i < per; i++) { const k = f * per + i; uv.setXY(k, uv.getX(k) * dims[f][0] / tile, uv.getY(k) * dims[f][1] / tile); }
+    uv.needsUpdate = true; o.userData.wuv = true;
+  });
+}
 // ---------- catálogo ----------
 export function buildProp(kind, w, d, M, variant = 0) {
   const g = new THREE.Group();
@@ -92,48 +143,147 @@ export function buildProp(kind, w, d, M, variant = 0) {
   switch (kind) {
     case 'cabinet': case 'wardrobe': case 'oldwardrobe': case 'bcabinet': case 'china_cabinet': {
       const W = w - 0.08, H = kind === 'bcabinet' ? 1.7 : kind === 'cabinet' ? 2.0 : 2.15, Dp = Math.min(d - 0.06, 0.48);
-      const body = kind === 'bcabinet' ? 0xd8d0c0 : kind === 'oldwardrobe' ? 0xa08870 : 0xffffff;
-      const mat = kind === 'bcabinet' ? M.porcelain : M.darkWood;
-      // v2: corpo OCO (fundo, laterais, teto e piso separados) — ao abrir, dá para ver o interior
-      const th = 0.035;
-      B(g, W, H, th, mat, 0, H / 2 + 0.06, -Dp / 2 + th / 2, body);                 // fundo
-      B(g, th, H, Dp, mat, -W / 2 + th / 2, H / 2 + 0.06, 0, body);                 // lateral esquerda
-      B(g, th, H, Dp, mat, W / 2 - th / 2, H / 2 + 0.06, 0, body);                  // lateral direita
-      B(g, W, th, Dp, mat, 0, H + 0.06 - th / 2, 0, body);                          // teto
-      B(g, W, th, Dp, mat, 0, 0.06 + th / 2, 0, body);                              // piso
-      B(g, W + 0.08, 0.1, Dp + 0.06, mat, 0, H + 0.1, 0, body);
-      B(g, W + 0.04, 0.06, Dp + 0.03, mat, 0, 0.03, 0, body);
-      // interior: forro escuro, prateleira do meio e (guarda-roupas) cabideiro com um casaco velho
-      B(g, W - 0.1, H - 0.1, 0.01, M.black, 0, H / 2 + 0.06, -Dp / 2 + th + 0.006);
-      B(g, W - 2 * th, 0.02, Dp - 0.06, M.darkWood, 0, H * 0.5, 0.0, 0x6a4a30);
-      if (kind === 'wardrobe' || kind === 'oldwardrobe') {
-        C(g, 0.012, 0.012, W - 2 * th, M.brass, 0, H * 0.86, 0, 0xffffff, 6, 0, Math.PI / 2);
-        B(g, 0.32, 0.55, 0.06, M.fabric, -W / 4, H * 0.86 - 0.32, 0, 0x2a2420);
+      const robe = kind === 'wardrobe' || kind === 'oldwardrobe' || kind === 'cabinet';
+      const body = kind === 'bcabinet' ? 0xd8d0c0 : kind === 'oldwardrobe' ? 0x9a8470 : 0xffffff;
+      // v3: guarda-roupas em madeira escura envelhecida com almofadas (M.agedWood); banheiro continua em porcelana
+      const mat = kind === 'bcabinet' ? M.porcelain : (M.agedWood || M.darkWood);
+      const th = 0.035, y0 = 0.08;
+      // corpo OCO: fundo de verdade (painel grosso) + laterais, teto e piso — ao abrir, você vê o interior, nunca a parede
+      B(g, W, H, th, mat, 0, H / 2 + y0, -Dp / 2 + th / 2, body);
+      B(g, th, H, Dp, mat, -W / 2 + th / 2, H / 2 + y0, 0, body);
+      B(g, th, H, Dp, mat, W / 2 - th / 2, H / 2 + y0, 0, body);
+      B(g, W, th, Dp, mat, 0, H + y0 - th / 2, 0, body);
+      B(g, W, th, Dp, mat, 0, y0 + th / 2, 0, body);
+      // cornija (2 frisos) e rodapé com pezinhos
+      B(g, W + 0.06, 0.07, Dp + 0.04, mat, 0, H + y0 + 0.035, 0.0, body);
+      B(g, W + 0.02, 0.04, Dp + 0.02, mat, 0, H + y0 + 0.09, -0.005, body);
+      B(g, W + 0.02, 0.05, Dp + 0.01, mat, 0, y0 - 0.005, 0, body);
+      for (const sx of [-1, 1]) B(g, 0.07, 0.05, 0.07, mat, sx * (W / 2 - 0.035), 0.025, Dp / 2 - 0.04, body);
+      // forro interno: madeira mais clara (não é um buraco preto) + sombra suave no fundo
+      const lining = kind === 'bcabinet' ? 0xc8c0b0 : 0xc8a890;
+      B(g, W - 2 * th - 0.004, H - 2 * th - 0.004, 0.008, kind === 'bcabinet' ? M.porcelain : mat, 0, H / 2 + y0, -Dp / 2 + th + 0.005, lining);
+      if (robe) {
+        // prateleira alta (chapéus/caixas) e cabideiro de latão
+        B(g, W - 2 * th, 0.02, Dp - 0.05, mat, 0, y0 + H * 0.86, -0.02, 0xd0b8a0);
+        C(g, 0.011, 0.011, W - 2 * th, M.brass, 0, y0 + H * 0.8, 0.0, 0xffffff, 8, 0, Math.PI / 2);
+        for (const sx of [-1, 1]) B(g, 0.02, 0.05, 0.03, M.brass, sx * (W / 2 - th - 0.01), y0 + H * 0.8, 0);
+        if (rnd.next() < 0.7) { const hb = C(g, 0.12, 0.12, 0.14, M.fabric, -W / 4 + rnd.next() * 0.1, y0 + H * 0.86 + 0.08, -0.03, [0x5a3a2a, 0x2a3a4a, 0x6a1a1a][variant % 3], 14); void hb; }
+        // roupas penduradas (malha única, colorida por vértice) — escondidas quando o armário guarda a chave
+        const clothes = buildClothes(M, W - 2 * th - 0.04, Dp - 0.06, y0 + H * 0.8, rnd, variant, kind === 'cabinet');
+        clothes.userData.dynamic = true; g.add(clothes); g.userData.clothes = clothes;
+      } else {
+        B(g, W - 2 * th, 0.02, Dp - 0.06, M.darkWood, 0, y0 + H * 0.5 - 0.25, 0.0, 0x6a4a30);
+        if (kind === 'china_cabinet') for (let i = 0; i < 4; i++) C(g, 0.1, 0.1, 0.015, M.porcelain, -W / 2 + 0.2 + i * (W - 0.4) / 3, y0 + H * 0.5 - 0.12, -0.1, 0xffffff, 16, Math.PI / 2 - 0.3);
+        if (kind === 'bcabinet') for (let i = 0; i < 3; i++) B(g, 0.2, 0.05, 0.22, M.fabric, -W / 2 + 0.18 + i * 0.22, y0 + H * 0.5 - 0.22, -0.04, [0xd8d0c0, 0x8aa0a8, 0xc8b8a0][i]);
       }
-      if (kind === 'china_cabinet') for (let i = 0; i < 4; i++) { const m = C(g, 0.11, 0.11, 0.015, M.porcelain, -W / 2 + 0.2 + i * (W - 0.4) / 3, H * 0.5 + 0.13, -0.08, 0xffffff, 16, Math.PI / 2 - 0.3); }
+      // ganchinho de chave no centro do fundo (só aparece no armário que guarda a chave)
+      const hook = new THREE.Group(); hook.position.set(0, y0 + H * 0.58, -Dp / 2 + th + 0.012); g.add(hook);
+      B(hook, 0.026, 0.04, 0.006, M.brass, 0, 0.012, 0.003, 0xc89a40);
+      S(hook, 0.0035, M.brass, 0, 0.026, 0.007, 0xe0b850, 1, 1, 1, 6); S(hook, 0.0035, M.brass, 0, -0.002, 0.007, 0xe0b850, 1, 1, 1, 6);
+      C(hook, 0.0022, 0.0022, 0.02, M.brass, 0, 0.004, 0.016, 0xd8aa48, 6, Math.PI / 2);
+      const hk = mesh(new THREE.TorusGeometry(0.006, 0.0022, 6, 10, Math.PI), M.brass, 0xd8aa48); hk.position.set(0, 0.009, 0.026); hk.rotation.set(0, Math.PI / 2, 0); hook.add(hk);
+      hook.visible = false; hook.userData.dynamic = true; g.userData.hook = hook;
+      // portas almofadadas (moldura + 2 almofadas em relevo), puxadores verticais e espelho de fechadura
+      const doorCol = body === 0xffffff ? 0xd8bca8 : body;
       const lw = W / 2;
-      const left = new THREE.Group(); left.position.set(-W / 2, 0.06, Dp / 2 + 0.01); g.add(left);
-      const doorMat = kind === 'china_cabinet' ? M.glass : M.wood;
-      B(left, lw - 0.01, H - 0.04, 0.03, M.wood, lw / 2, H / 2, 0, body === 0xffffff ? 0x6a4228 : body);
-      if (kind !== 'bcabinet') { B(left, lw - 0.16, H * 0.38, 0.015, kind === 'china_cabinet' ? M.glass : M.darkWood, lw / 2, H * 0.7, 0.02, 0xffffff); B(left, lw - 0.16, H * 0.38, 0.015, M.darkWood, lw / 2, H * 0.27, 0.02); }
-      knob(left, M, lw - 0.06, H * 0.5, 0.03);
-      const right = new THREE.Group(); right.position.set(W / 2, 0.06, Dp / 2 + 0.01); g.add(right);
-      B(right, lw - 0.01, H - 0.04, 0.03, M.wood, -lw / 2, H / 2, 0, body === 0xffffff ? 0x6a4228 : body);
-      if (kind !== 'bcabinet') { B(right, lw - 0.16, H * 0.38, 0.015, kind === 'china_cabinet' ? M.glass : M.darkWood, -lw / 2, H * 0.7, 0.02, 0xffffff); B(right, lw - 0.16, H * 0.38, 0.015, M.darkWood, -lw / 2, H * 0.27, 0.02); }
-      knob(right, M, -lw + 0.06, H * 0.5, 0.03);
+      const mkDoor = (side) => {
+        const dg = new THREE.Group(); dg.position.set(side * W / 2, y0, Dp / 2 + 0.01); g.add(dg);
+        const cx = -side * lw / 2, dh = H - 0.04;
+        B(dg, lw - 0.012, dh, 0.03, mat, cx, H / 2, 0, doorCol);
+        if (kind !== 'bcabinet') {
+          for (const [py, ph] of [[H * 0.7, H * 0.38], [H * 0.27, H * 0.34]]) {
+            const glassy = kind === 'china_cabinet' && py > H * 0.5;
+            B(dg, lw - 0.13, ph, 0.012, glassy ? M.glass : mat, cx, py, 0.02, glassy ? 0xffffff : (kind === 'bcabinet' ? 0xc8c0b0 : 0xa88a72));   // almofada
+            B(dg, lw - 0.1, 0.022, 0.014, mat, cx, py + ph / 2 + 0.011, 0.018, 0xffffff);                            // friso
+            B(dg, lw - 0.1, 0.022, 0.014, mat, cx, py - ph / 2 - 0.011, 0.018, 0x806048);
+          }
+        }
+        const hx = -side * (lw - 0.07);
+        C(dg, 0.008, 0.008, 0.2, M.brass, hx, H * 0.52, 0.035, 0xffffff, 8);
+        for (const yy of [H * 0.52 - 0.1, H * 0.52 + 0.1]) B(dg, 0.014, 0.014, 0.02, M.brass, hx, yy, 0.025);
+        if (side < 0) { B(dg, 0.03, 0.05, 0.004, M.brass, hx + side * 0.03 * -1, H * 0.45, 0.018, 0xb08a3a); }
+        return dg;
+      };
+      const left = mkDoor(-1), right = mkDoor(1);
       if (kind === 'oldwardrobe') { const sh = mesh(new THREE.PlaneGeometry(W * 0.7, 0.9, 8, 4), M.sheet, 0xb0a898); sh.position.set(0.1, H * 0.75, Dp / 2 + 0.05); g.add(sh); sh.userData.dynamic = true; }
-      const anchor = new THREE.Object3D(); anchor.position.set(-0.15, H * 0.5 + 0.03, 0.02); g.add(anchor);
-      void doorMat;
-      return dyn(g, { part: left, type: 'door', amount: -1.9, anchor, label: kind === 'china_cabinet' ? 'cristaleira' : 'armário', extra: right });
+      // chave: pendurada no gancho do centro (hang) — ou, nos armários sem roupa, também no gancho
+      const anchor = new THREE.Object3D(); anchor.position.set(0, y0 + H * 0.58 + 0.005, -Dp / 2 + th + 0.036); g.add(anchor);
+      if (mat === M.agedWood) woodUV(g, mat);
+      return dyn(g, { part: left, type: 'door', amount: -1.9, anchor, hang: true, label: kind === 'china_cabinet' ? 'cristaleira' : kind === 'bcabinet' ? 'armário do banheiro' : 'guarda-roupa', extra: right });
     }
-    case 'console': case 'sideboard': case 'side_table': case 'nightstand': case 'dresser': {
-      const H = kind === 'console' ? 0.85 : kind === 'nightstand' ? 0.6 : kind === 'side_table' ? 0.68 : kind === 'dresser' ? 1.0 : 0.92;
+    case 'dresser': {
+      // v3: cômoda com UMA gaveta grande em cima (a que abre — é onde a chave pode estar) e uma grade de
+      // gavetinhas decorativas embaixo
+      const H = 1.0, W = w - 0.08, Dp = Math.min(d - 0.06, 0.46);
+      const mat = M.agedWood || M.darkWood;
+      B(g, W, H - 0.12, Dp, mat, 0, (H - 0.12) / 2 + 0.1, 0, 0xffffff);
+      B(g, W + 0.05, 0.045, Dp + 0.05, M.wood, 0, H - 0.0, 0, 0x8a6040);
+      B(g, W + 0.02, 0.06, Dp + 0.02, mat, 0, 0.1, 0, 0x9a7a60);
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) { const f = C(g, 0.03, 0.022, 0.08, mat, sx * (W / 2 - 0.05), 0.04, sz * (Dp / 2 - 0.05), 0x8a6a50, 8); void f; }
+      // gaveta grande (interativa)
+      const bigH = 0.2, bigW = W - 0.08, yTop = H - 0.15;
+      const p = new THREE.Group(); p.position.set(0, yTop, Dp / 2 + 0.005); g.add(p);
+      B(p, bigW, bigH, 0.03, mat, 0, 0, 0, 0xd8bca8);
+      B(p, bigW - 0.06, bigH - 0.06, 0.008, mat, 0, 0, 0.017, 0xb09078);
+      for (const sx of [-0.28, 0.28]) { knob(p, M, sx * bigW, 0, 0.028); }
+      B(p, 0.035, 0.05, 0.004, M.brass, 0, 0, 0.022, 0xb08a3a);
+      B(p, bigW - 0.04, bigH - 0.03, Dp - 0.08, M.black, 0, 0, -Dp / 2 + 0.01);
+      B(p, bigW - 0.05, 0.008, Dp - 0.09, M.wood, 0, -bigH / 2 + 0.02, -Dp / 2 + 0.01, 0x5a3a24);
+      const an = new THREE.Object3D(); an.position.set(0, -bigH / 2 + 0.03, -0.12); p.add(an);
+      // gavetinhas decorativas: 2 fileiras × 4 (ou 3 se for estreita), fixas
+      const cols = W > 1.2 ? 4 : 3, rows = 2, gy0 = 0.17, gy1 = yTop - bigH / 2 - 0.035;
+      const cw = (W - 0.08) / cols, rh = (gy1 - gy0) / rows;
+      for (let rr = 0; rr < rows; rr++) for (let cc = 0; cc < cols; cc++) {
+        const x = -W / 2 + 0.04 + cw * (cc + 0.5), y = gy0 + rh * (rr + 0.5);
+        B(g, cw - 0.025, rh - 0.025, 0.02, mat, x, y, Dp / 2 + 0.008, 0xc8ac98);
+        knob(g, M, x, y, Dp / 2 + 0.03);
+      }
+      // espelho
+      B(g, 0.6, 0.75, 0.04, M.darkWood, 0, H + 0.4, -Dp / 2 + 0.05); B(g, 0.5, 0.62, 0.01, M.glass, 0, H + 0.4, -Dp / 2 + 0.08, 0x9aa0b0);
+      if (mat === M.agedWood) woodUV(g, mat);
+      return dynParts(g, [{ part: p, type: 'drawer', amount: 0.32, anchor: an, label: 'gaveta grande da cômoda' }]);
+    }
+    case 'statue': {
+      // busto de mármore sobre pedestal
+      C(g, 0.2, 0.21, 0.08, M.stone, 0, 0.04, 0, 0xb8b2a8, 16);
+      C(g, 0.13, 0.15, 0.9, (M.marble || M.porcelain), 0, 0.53, 0, 0xc8c2b4, 14);
+      C(g, 0.19, 0.17, 0.07, M.stone, 0, 1.01, 0, 0xb8b2a8, 16);
+      const bust = new THREE.Group(); bust.position.y = 1.05; g.add(bust);
+      S(bust, 0.18, (M.marble || M.porcelain), 0, 0.16, 0, 0xd8d2c4, 1.15, 0.75, 0.62, 14);
+      C(bust, 0.05, 0.06, 0.12, (M.marble || M.porcelain), 0, 0.32, 0, 0xd8d2c4, 10);
+      S(bust, 0.11, (M.marble || M.porcelain), 0, 0.5, 0.01, 0xd8d2c4, 0.85, 1.05, 0.95, 14);
+      S(bust, 0.022, (M.marble || M.porcelain), 0, 0.5, 0.11, 0xd0cabc, 0.8, 1.2, 1, 6);
+      if (variant % 3 === 0) B(bust, 0.13, 0.02, 0.02, M.black, 0, 0.53, 0.095, 0x101010); // olhos cobertos por uma faixa
+      return g;
+    }
+    case 'pew': {
+      const W = w - 0.12, Dp = d - 0.14;
+      for (const sx of [-1, 1]) B(g, 0.06, 0.95, Dp, M.darkWood, sx * (W / 2 - 0.03), 0.475, 0, 0x3a2214);
+      B(g, W - 0.1, 0.05, Dp * 0.48, M.wood, 0, 0.45, Dp * 0.16, 0x5a3a24);
+      B(g, W - 0.1, 0.5, 0.04, M.wood, 0, 0.75, -Dp * 0.08, 0x5a3a24);
+      B(g, W - 0.1, 0.05, 0.12, M.wood, 0, 0.98, -Dp * 0.08, 0x4a2a18);
+      B(g, W - 0.1, 0.04, Dp * 0.25, M.wood, 0, 0.12, Dp * 0.16, 0x3a2214);
+      B(g, W - 0.1, 0.3, 0.035, M.darkWood, 0, 0.62, -Dp / 2 + 0.03, 0x3a2214);
+      B(g, W - 0.1, 0.035, 0.18, M.darkWood, 0, 0.78, -Dp / 2 + 0.1, 0x3a2214);
+      return g;
+    }
+    case 'altar': {
+      const W = w - 0.08, Dp = Math.min(d - 0.06, 0.44);
+      B(g, W, 0.94, Dp, M.stone, 0, 0.47, 0, 0xa8a298);
+      B(g, W + 0.04, 0.06, Dp + 0.04, M.stone, 0, 0.97, 0, 0xb8b2a8);
+      B(g, W * 0.92, 0.006, Dp + 0.05, M.fabric, 0, 1.003, 0, 0xe0d8c8);
+      B(g, W * 0.3, 0.5, 0.006, M.fabric, 0, 0.72, Dp / 2 + 0.026, 0x6a1416);
+      B(g, 0.03, 0.24, 0.03, M.brass, 0, 1.12, -0.05, 0xc89a40); B(g, 0.14, 0.03, 0.03, M.brass, 0, 1.17, -0.05, 0xc89a40);
+      return g;
+    }
+    case 'console': case 'sideboard': case 'side_table': case 'nightstand': {
+      const H = kind === 'console' ? 0.85 : kind === 'nightstand' ? 0.6 : kind === 'side_table' ? 0.68 : 0.92;
       const W = w - 0.08, Dp = Math.min(d - 0.06, 0.46);
       const solid = kind !== 'console' && kind !== 'side_table';
       if (solid) { B(g, W, H - 0.1, Dp, M.darkWood, 0, (H - 0.1) / 2 + 0.08, 0); legsTable(g, M, W, Dp, 0.1, 0xffffff, 0.04, 0.025); }
       else { legsTable(g, M, W, Dp, H - 0.04, 0xffffff, 0.04, 0.022); B(g, W - 0.06, 0.14, Dp - 0.06, M.darkWood, 0, H - 0.12, 0); }
       B(g, W + 0.04, 0.04, Dp + 0.04, M.wood, 0, H - 0.02, 0, 0x8a6040);
-      const rows = kind === 'dresser' ? 3 : kind === 'sideboard' ? 2 : 1;
+      const rows = kind === 'sideboard' ? 2 : 1;
       const cols = W > 1.2 ? 2 : 1;
       let top = null; const drawers = [];
       for (let rr = 0; rr < rows; rr++) for (let cc = 0; cc < cols; cc++) {
@@ -145,11 +295,10 @@ export function buildProp(kind, w, d, M, variant = 0) {
         // v2: TODA gaveta tem fundo (caixa) e ponto de apoio para a chave — cada uma abre separada
         B(p, dw - 0.04, dh - 0.03, Dp - 0.08, M.black, 0, 0, -Dp / 2 + 0.01);
         const an = new THREE.Object3D(); an.position.set(0, -dh / 2 + 0.03, -0.1); p.add(an);
-        drawers.push({ part: p, type: 'drawer', amount: 0.3, anchor: an, label: (kind === 'dresser' ? 'gaveta da cômoda' : 'gaveta') + (rows * cols > 1 ? ` ${rr * cols + cc + 1}` : '') });
+        drawers.push({ part: p, type: 'drawer', amount: 0.3, anchor: an, label: 'gaveta' + (rows * cols > 1 ? ` ${rr * cols + cc + 1}` : '') });
         if (!top) top = p;
       }
       // decoração em cima
-      if (kind === 'dresser') { B(g, 0.6, 0.75, 0.04, M.darkWood, 0, H + 0.4, -Dp / 2 + 0.05); B(g, 0.5, 0.62, 0.01, M.glass, 0, H + 0.4, -Dp / 2 + 0.08, 0x9aa0b0); }
       if (kind === 'console' || kind === 'sideboard') { C(g, 0.05, 0.07, 0.25, M.porcelain, W / 2 - 0.2, H + 0.125, 0, 0x4a5a70, 10); }
       void top;
       return dynParts(g, drawers);
@@ -419,24 +568,39 @@ function lumpy(geo, amt, freq) {
   geo.computeVertexNormals();
 }
 
+// v3: chave PEQUENA (~6 cm, tamanho real de chave antiga de chaveiro). O que chama a atenção é o brilho dourado
+// pulsante (halo aditivo) que o jogo liga só quando a chave está no campo de visão da câmera.
+let haloTex = null;
+function keyHaloTexture() {
+  if (haloTex) return haloTex;
+  const c = document.createElement('canvas'); c.width = c.height = 128; const x = c.getContext('2d');
+  const gr = x.createRadialGradient(64, 64, 0, 64, 64, 64);
+  gr.addColorStop(0, 'rgba(255,240,190,1)'); gr.addColorStop(0.18, 'rgba(255,205,90,0.75)'); gr.addColorStop(0.5, 'rgba(255,170,40,0.18)'); gr.addColorStop(1, 'rgba(255,150,20,0)');
+  x.fillStyle = gr; x.fillRect(0, 0, 128, 128);
+  x.globalCompositeOperation = 'lighter';
+  for (const [w, h, a] of [[128, 4, 0.85], [4, 128, 0.85], [70, 2, 0.4], [2, 70, 0.4]]) {
+    const lg = x.createRadialGradient(64, 64, 0, 64, 64, Math.max(w, h) / 2);
+    lg.addColorStop(0, `rgba(255,236,170,${a})`); lg.addColorStop(1, 'rgba(255,200,80,0)');
+    x.save(); x.translate(64, 64); if (w === 70 || h === 70) x.rotate(Math.PI / 4); x.fillStyle = lg; x.fillRect(-w / 2, -h / 2, w, h); x.restore();
+  }
+  haloTex = new THREE.CanvasTexture(c); haloTex.colorSpace = THREE.SRGBColorSpace;
+  return haloTex;
+}
 export function buildKey(M) {
   const g = new THREE.Group();
-  // chave maior e com brilho dourado suave para ser vista dentro de gavetas escuras
-  if (!M.keyGold) M.keyGold = new THREE.MeshStandardMaterial({ color: 0xe8b848, metalness: 0.85, roughness: 0.3, emissive: 0xffa830, emissiveIntensity: 1.2 });
+  if (!M.keyGold) M.keyGold = new THREE.MeshStandardMaterial({ color: 0xd8a838, metalness: 0.9, roughness: 0.3, emissive: 0xffa020, emissiveIntensity: 0.5 });
   const gm = M.keyGold;
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.035, 0.009, 8, 20), gm); g.add(ring);
-  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.007, 0.007, 0.15, 8), gm); shaft.rotation.z = Math.PI / 2; shaft.position.x = 0.105; g.add(shaft);
-  for (const xx of [0.15, 0.172]) { const t = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.032, 0.007), gm); t.position.set(xx, -0.018, 0); g.add(t); }
-  const orn = new THREE.Mesh(new THREE.TorusGeometry(0.018, 0.004, 6, 12), gm); orn.position.x = 0; g.add(orn);
-  g.scale.setScalar(2.1);
-  // halo aditivo discreto
-  const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d'); const gr = x.createRadialGradient(32, 32, 0, 32, 32, 32); gr.addColorStop(0, 'rgba(255,255,255,0.95)'); gr.addColorStop(0.35, 'rgba(235,240,255,0.35)'); gr.addColorStop(1, 'rgba(220,230,255,0)'); x.fillStyle = gr; x.fillRect(0, 0, 64, 64); // v2: brilho BRANCO (fase 2: o preenchimento estava comentado por engano — o halo era invisível)
-  // raios finos em cruz (estrela de brilho) — a chave "cintila" quando a lanterna passa
-  x.globalCompositeOperation = 'lighter'; for (const [w, h] of [[64, 3], [3, 64]]) { const lg = x.createLinearGradient(32 - w / 2, 32 - h / 2, 32 + w / 2, 32 + h / 2); lg.addColorStop(0, 'rgba(255,255,255,0)'); lg.addColorStop(0.5, 'rgba(255,255,255,0.8)'); lg.addColorStop(1, 'rgba(255,255,255,0)'); x.fillStyle = lg; x.fillRect(32 - w / 2, 32 - h / 2, w, h); }
-  const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.45 }));
-  halo.scale.set(0.26, 0.26, 1); halo.position.set(0.08, 0, 0.03); g.add(halo); g.userData.halo = halo;
-  // ergue a chave acima do fundo do recipiente (o +Z local vira 'para cima' quando deitada)
-  for (const c of g.children) if (c !== halo) c.position.z += 0.014;
+  const add = (geo, x, y, z, rz = 0) => { const m = new THREE.Mesh(geo, gm); m.position.set(x, y, z); m.rotation.z = rz; g.add(m); return m; };
+  add(new THREE.TorusGeometry(0.0095, 0.0024, 8, 20), 0, 0, 0);                       // argola
+  add(new THREE.TorusGeometry(0.0042, 0.0012, 6, 12), 0, 0, 0);                       // ornamento
+  add(new THREE.CylinderGeometry(0.0032, 0.0032, 0.004, 10), 0.0125, 0, 0, Math.PI / 2); // colar
+  add(new THREE.CylinderGeometry(0.0019, 0.0019, 0.042, 8), 0.034, 0, 0, Math.PI / 2);  // haste
+  add(new THREE.BoxGeometry(0.0045, 0.0095, 0.0024), 0.049, -0.0055, 0);               // palhetão
+  add(new THREE.BoxGeometry(0.0035, 0.0065, 0.0024), 0.0545, -0.004, 0);
+  for (const c of g.children) c.position.z += 0.0026; // apoiada (o +Z local vira "para cima" quando deitada)
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: keyHaloTexture(), color: 0xffc860, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.0 }));
+  halo.scale.set(0.12, 0.12, 1); halo.position.set(0.026, 0, 0.012); halo.renderOrder = 5; halo.visible = false;
+  g.add(halo); g.userData.halo = halo;
   return g;
 }
 

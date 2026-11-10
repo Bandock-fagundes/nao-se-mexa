@@ -189,34 +189,34 @@ test('Perseguição é escapável: correr, quebrar a linha de visão e ficar par
     const m = makeMatch(phase, 'esc-' + s);
     const c = clearCorridor(m, 1, 30); if (!c) continue;
     for (const p of m.players.values()) p.flashlight = false;
-    m.debugPlaceCreature(c.x0, c.z, 1, Math.PI / 2); m.creature.setState('patrol'); m.creature.path = null;
-    m.debugPlacePlayer('p1', c.x0 + 11, c.z, 1);
+    m.debugPlaceCreature(c.x0, c.z, c.L, Math.PI / 2); m.creature.setState('patrol'); m.creature.path = null;
+    m.debugPlacePlayer('p1', c.x0 + 11, c.z, c.L);
     run(m, 0.8, strafe(m, 'p1'));
     if (!['alert', 'chase'].includes(m.creature.state)) continue;
     const p = m.players.get('p1');
     // esconderijo: ponto de uma sala do térreo, mais longe da criatura que do jogador, fora da visão dela
     let best = null, bd = 1e9;
-    for (const r of m.map.rooms.filter(r => r.level === 1 && r.type !== 'corridor' && r.type !== 'stairs')) {
+    for (const r of m.map.rooms.filter(r => r.level === c.L && r.type !== 'corridor' && r.type !== 'stairs')) {
       const pt = m.creature.roomPoint(r); if (!pt) continue;
       const d = Math.hypot(pt.x - p.x, pt.z - p.z), away = Math.hypot(pt.x - m.creature.x, pt.z - m.creature.z) - d;
-      if (away > 2 && d < bd && !m.world.lineOfSight(1, m.creature.x, m.creature.z, pt.x, pt.z)) { bd = d; best = pt; }
+      if (away > 2 && d < bd && !m.world.lineOfSight(c.L, m.creature.x, m.creature.z, pt.x, pt.z)) { bd = d; best = pt; }
     }
     if (!best) continue;
     n++;
-    const path = m.nav.findPath(1, p.x, p.z, 1, best.x, best.z);
+    const path = m.nav.findPath(c.L, p.x, p.z, c.L, best.x, best.z);
     let pi = 0, stam = PLAYER.staminaMax, hidden = 0, still = false;
     run(m, 40, (t, dt) => {
       if (!p.alive || still) { m.applyInput('p1', { x: p.x, z: p.z, yaw: p.yaw, pitch: 0, fl: false, crouch: true, run: false }); return; }
       const cr = m.creature;
-      hidden = m.world.lineOfSight(1, cr.x, cr.z, p.x, p.z) ? 0 : hidden + dt;
+      hidden = m.world.lineOfSight(c.L, cr.x, cr.z, p.x, p.z) ? 0 : hidden + dt;
       if (hidden > 1.2 && pi >= path.length - 1) { still = true; return; }
-      for (const d of m.map.doors) if (d.level === 1 && !m.world.doorOpen[d.id] && Math.hypot(d.x - p.x, d.z - p.z) < 1.4) m.interact('p1', { kind: 'door', id: d.id });
+      for (const d of m.map.doors) if (d.level === c.L && !m.world.doorOpen[d.id] && Math.hypot(d.x - p.x, d.z - p.z) < 1.4) m.interact('p1', { kind: 'door', id: d.id });
       let wp = path[Math.min(pi, path.length - 1)];
       while (Math.hypot(wp.x - p.x, wp.z - p.z) < 0.35 && pi < path.length - 1) wp = path[++pi];
       if (pi >= path.length - 1 && Math.hypot(wp.x - p.x, wp.z - p.z) < 0.35) { pi = path.length; return; }
       const sp = stam > 0 ? PLAYER.run * 0.97 : PLAYER.walk; stam -= dt;
       const dx = wp.x - p.x, dz = wp.z - p.z, d = Math.hypot(dx, dz) || 1;
-      const r = m.world.move(1, p.x, p.z, dx / d * Math.min(d, sp * dt), dz / d * Math.min(d, sp * dt), PLAYER.radius);
+      const r = m.world.move(c.L, p.x, p.z, dx / d * Math.min(d, sp * dt), dz / d * Math.min(d, sp * dt), PLAYER.radius);
       p.yaw = Math.atan2(-dx, -dz);
       m.applyInput('p1', { x: r.x, z: r.z, yaw: p.yaw, pitch: 0, fl: false, crouch: false, run: sp > 3 });
     });

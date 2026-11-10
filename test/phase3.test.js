@@ -7,17 +7,18 @@ import { AI, CREATURE, CELL } from '../shared/config.js';
 import { hearingCheck, makeSoundEvent } from '../server/senses.js';
 
 const SEED = 'fase-tres-5';
-const hide = (m, id = 'p1') => { const r = m.map.rooms.find(r => r.level === 3 && r.type !== 'corridor' && r.type !== 'stairs'); m.debugPlacePlayer(id, cc(Math.floor((r.x0 + r.x1) / 2)), cc(Math.floor((r.z0 + r.z1) / 2)), 3); };
+// v3: esconde o jogador num quarto do 2º andar (longe do trecho de teste, que fica no porão/sótão)
+const hide = (m, id = 'p1') => { const r = m.map.rooms.find(r => r.level === 2 && ['bedroom', 'master', 'nursery'].includes(r.type)); const pt = m.creature.roomPoint(r); m.debugPlacePlayer(id, pt.x, pt.z, 2); };
 
 test('F3: comportamentos anteriores continuam (visão e audição ativas)', () => {
   const m = makeMatch(3, SEED);
   assert.ok(m.phaseCfg.vision && m.phaseCfg.hearing && m.phaseCfg.smell);
   const c = clearCorridor(m, 1, 30);
-  m.debugPlaceCreature(c.x0, c.z, 1, Math.PI / 2);
-  m.debugPlacePlayer('p1', c.x0 + 9, c.z, 1);
+  m.debugPlaceCreature(c.x0, c.z, c.L, Math.PI / 2);
+  m.debugPlacePlayer('p1', c.x0 + 9, c.z, c.L);
   run(m, 1.2, strafe(m, 'p1'));
   assert.ok(['alert', 'chase'].includes(m.creature.state));
-  const h = hearingCheck(m, m.creature, makeSoundEvent(m, 'step_run', c.x0 + 5, 0, c.z, 1));
+  const h = hearingCheck(m, m.creature, makeSoundEvent(m, 'step_run', c.x0 + 5, 0, c.z, c.L));
   assert.equal(h.heard, true);
 });
 
@@ -44,11 +45,11 @@ test('F3: rastros recentes podem ser detectados e perdem intensidade com o tempo
   // na partida: jogador anda, some; a criatura fareja e encontra o rastro
   const m = makeMatch(3, SEED);
   const c = clearCorridor(m, 1, 30);
-  m.debugPlacePlayer('p1', c.x0 + 3, c.z, 1);
+  m.debugPlacePlayer('p1', c.x0 + 3, c.z, c.L);
   run(m, 2.5, (t, dt) => stepPlayer(m, 'p1', 2.4, 0, dt));
   assert.ok(m.scent.size > 3, 'deixou rastro');
   hide(m);
-  m.debugPlaceCreature(c.x0, c.z, 1, -Math.PI / 2);
+  m.debugPlaceCreature(c.x0, c.z, c.L, -Math.PI / 2);
   m.creature.setState('patrol'); m.creature.path = null;
   m.creature.nextSniffT = m.t;
   run(m, AI.sniffDuration + 0.3);
@@ -59,12 +60,12 @@ test('F3: rastros recentes podem ser detectados e perdem intensidade com o tempo
 test('F3: a criatura segue uma sequência de rastros, sem posição exata do jogador', () => {
   const m = makeMatch(3, SEED);
   const c = clearCorridor(m, 1, 30);
-  m.debugPlacePlayer('p1', c.x0 + 2, c.z, 1);
+  m.debugPlacePlayer('p1', c.x0 + 2, c.z, c.L);
   run(m, 5.5, (t, dt) => stepPlayer(m, 'p1', 2.5, 0, dt)); // trilha de ~13 m
   const trailEnd = { x: m.players.get('p1').x, z: m.players.get('p1').z };
   hide(m); // vai para outro lugar sem deixar trilha até lá (teleporte de teste)
   const playerNow = { x: m.players.get('p1').x, z: m.players.get('p1').z, level: 3 };
-  m.debugPlaceCreature(c.x0, c.z, 1, Math.PI / 2);
+  m.debugPlaceCreature(c.x0, c.z, c.L, Math.PI / 2);
   m.creature.setState('patrol'); m.creature.path = null; m.creature.nextSniffT = m.t;
   const targets = [];
   run(m, 30, () => { if (m.creature.track && (!targets.length || targets[targets.length - 1] !== m.creature.track)) targets.push(m.creature.track); });
@@ -79,7 +80,7 @@ test('F3: a criatura não atravessa paredes nem se teletransporta', () => {
   m.creature.pickPatrol();
   m.creature.nextSniffT = m.t + 5;
   const c = clearCorridor(m, 1, 30);
-  m.debugPlacePlayer('p1', c.x0, c.z, 1);
+  m.debugPlacePlayer('p1', c.x0, c.z, c.L);
   const trace = [];
   run(m, 60, (t, dt) => { if (t < 20) stepPlayer(m, 'p1', Math.sin(t) * 2, 0, dt); const cr = m.creature; trace.push({ x: cr.x, z: cr.z, level: cr.level, t }); });
   const maxStep = 5.0 * 0.05 * 1.5;
@@ -103,13 +104,15 @@ test('F3: a criatura abandona uma investigação sem resultados', () => {
   m.creature.setState('patrol'); m.creature.nextSniffT = m.t;
   run(m, AI.sniffDuration + 0.5);
   assert.equal(m.creature.sniffInfo.state, 'nada encontrado');
-  assert.ok(['patrol', 'wander', 'look'].includes(m.creature.state));
+  // v3: a planta nova tem mais portas — ao retomar a patrulha ela pode estar abrindo uma ('door' guarda o estado em 'resume')
+  const st = m.creature.state === 'door' ? m.creature.resume : m.creature.state;
+  assert.ok(['patrol', 'wander', 'look'].includes(st), 'voltou a explorar: ' + m.creature.state + '/' + st);
   // rastro que acaba: segue e depois desiste
   const c = clearCorridor(m, 1, 30);
-  m.debugPlacePlayer('p1', c.x0, c.z, 1);
+  m.debugPlacePlayer('p1', c.x0, c.z, c.L);
   run(m, 2, (t, dt) => stepPlayer(m, 'p1', 2.4, 0, dt));
   hide(m);
-  m.debugPlaceCreature(c.x0, c.z, 1, Math.PI / 2);
+  m.debugPlaceCreature(c.x0, c.z, c.L, Math.PI / 2);
   m.creature.setState('patrol'); m.creature.path = null; m.creature.nextSniffT = m.t;
   let tracked = false, abandoned = false;
   run(m, 70, () => { if (m.creature.state === 'track') tracked = true; if (tracked && ['return', 'patrol', 'wander', 'recover'].includes(m.creature.state) && !m.creature.track) abandoned = true; if (m.creature.nextSniffT - m.t > 40) m.creature.nextSniffT = m.t + 25; });

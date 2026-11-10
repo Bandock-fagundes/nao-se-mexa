@@ -51,6 +51,8 @@ export class World {
     }
   }
   stairT(st, z) {
+    // v3: dir +1 = sobe para +z (escadaria principal: pé em zBot, topo em zTop > zBot)
+    if (st.dir === 1) { const z0 = st.zBot * CELL, z1 = (st.zTop + 1) * CELL; return Math.max(0, Math.min(1, (z - z0) / (z1 - z0))); }
     const zTop = st.zTop * CELL, zBot = (st.zBot + 1) * CELL;
     return Math.max(0, Math.min(1, (zBot - z) / (zBot - zTop)));
   }

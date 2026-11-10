@@ -7,6 +7,7 @@ import { buildMaterials } from './render/materials.js';
 import { Game } from './game.js';
 import { runIntro, shouldShowIntro } from './intro.js';
 import { LoadingScreen, nextPaint } from './loading.js';
+import { WakeScene } from './wakeup.js';
 import { generateMansion, validateMap } from '../../shared/mapgen.js';
 import { PHASES, W, D, T, CELL } from '../../shared/config.js';
 
@@ -48,7 +49,7 @@ function show(id) {
 }
 // trilha conforme a tela
 function updateMusic() {
-  if (app.introRunning) return app.music.setMode('none');
+  if (app.introRunning || app.wakeRunning) return app.music.setMode('none');
   if (app.screen === 'loading') return app.music.setMode('loading');
   if (app.game && app.playing && !app.game.ended) return app.music.setMode('game');
   if (app.game) return app.music.setMode('none');
@@ -83,13 +84,12 @@ $('#name').value = localStorage.getItem('nsm_name') || '';
 $('#tName').value = localStorage.getItem('nsm_name') || '';
 const myName = () => { const n = ($('#name').value || $('#tName').value || 'Jogador').trim().slice(0, 16) || 'Jogador'; localStorage.setItem('nsm_name', n); return n; };
 function segInit(sel, cb) { $$(sel + ' button').forEach(b => b.addEventListener('click', () => { $$(sel + ' button').forEach(x => x.classList.toggle('on', x === b)); cb(+b.dataset.phase); })); }
-segInit('#phaseSel', (p) => app.phase = p);
+// v3: sem seletor de fase para jogadores (sempre começa na Fase 1 e avança 1 → 2 → 3). Só a aba TESTAR JOGO escolhe.
 segInit('#tPhase', (p) => app.phase = p);
-segInit('#lobbyPhase', (p) => app.net.send({ t: 'phase', phase: p }));
 async function ensureNet() { try { await app.net.connect(); return true; } catch { setErr('Não foi possível conectar ao servidor.'); return false; } }
 function setErr(msg) { const el = app.screen === 'lobby' ? $('#lobbyErr') : app.screen === 'testar' ? $('#tErr') : $('#modeErr'); if (el) el.textContent = msg; else toast(msg, 'warn'); }
-$('#btnSolo').addEventListener('click', async () => { app.audio.init(); if (await ensureNet()) { app.testMode = false; app.net.send({ t: 'solo', name: myName(), phase: app.phase }); show('loading'); } });
-$('#btnCreate').addEventListener('click', async () => { app.audio.init(); if (await ensureNet()) { app.testMode = false; app.net.send({ t: 'create', name: myName(), phase: app.phase }); } });
+$('#btnSolo').addEventListener('click', async () => { app.audio.init(); if (await ensureNet()) { app.testMode = false; app.phase = 1; app.net.send({ t: 'solo', name: myName() }); show('loading'); } });
+$('#btnCreate').addEventListener('click', async () => { app.audio.init(); if (await ensureNet()) { app.testMode = false; app.phase = 1; app.net.send({ t: 'create', name: myName() }); } });
 $('#btnJoin').addEventListener('click', async () => { app.audio.init(); const c = $('#joinCode').value.trim().toUpperCase(); if (c.length < 5) return setErr('Digite o código de 5 letras.'); if (await ensureNet()) { app.testMode = false; app.net.send({ t: 'join', code: c, name: myName() }); } });
 // ---------------- TESTAR JOGO ----------------
 $('#tSolo').addEventListener('click', async () => { app.audio.init(); if (await ensureNet()) { app.testMode = true; app.diagOn = $('#tDiag').checked; app.net.send({ t: 'solo', name: myName(), phase: app.phase, test: true, seed: $('#tSeed').value.trim() || undefined }); show('loading'); } });
@@ -143,7 +143,7 @@ function renderLobby() {
   $('#lobbyCount').textContent = `(${r.players.length}/${r.max})`;
   const isHost = r.hostId === app.myId;
   $('#lobbyPlayers').innerHTML = r.players.map(p => `<li><span>${esc(p.name)}${p.id === app.myId ? ' (você)' : ''}${p.isHost ? '<span class="tag">anfitrião</span>' : ''}</span><span>${p.connected ? '' : '<span class="tag off">desconectado</span>'}${p.isHost ? '<span class="tag ok">pronto</span>' : p.ready ? '<span class="tag ok">pronto</span>' : '<span class="tag wait">aguardando</span>'}</span></li>`).join('');
-  $$('#lobbyPhase button').forEach(b => { b.classList.toggle('on', +b.dataset.phase === r.phase); b.disabled = !isHost; });
+  { const ph = PHASES[r.phase] || PHASES[1]; $('#lobbyPhaseInfo').textContent = `Próxima partida: ${ph.wake[0].replace(/\.$/, '')}${r.test ? ' (aba de testes)' : ''}`; }
   const notReady = r.players.filter(p => !p.isHost && p.connected && !p.ready);
   $('#btnStart').style.display = isHost ? '' : 'none';
   $('#btnStart').disabled = notReady.length > 0;
@@ -217,25 +217,49 @@ async function startGame(m) {
     stopGame(true);
     app.game = new Game(app, m);
     await L.step(0.82, 'Escondendo as chaves…');
-    if (!app.game.hashOk) toast('Aviso: mapa diferente do servidor (versões diferentes). Recarregue a página.', 'warn');
+    if (!app.game.hashOk) { console.warn('[mapa] hash diferente do servidor', m.gen, m.mapHash, app.game.map.hash); toast(app.game.genVersionOk ? 'Aviso: mapa diferente do servidor. Recarregue a página.' : 'Aviso: versão do jogo diferente da do servidor. Recarregue a página.', 'warn'); }
     if (!m.resumed) { app.stats.started = (app.stats.started || 0) + 1; app.saveStats(); }
     // compila os shaders do jogo com um quadro antes de revelar
     try { app.renderer.render(); } catch { }
     await L.step(0.94, 'Acordando a criatura…');
     await L.finish(isE2E ? 0 : 2500);
     if (token !== app.loadToken || !app.game) return;
+    const pre = m.state && m.state.pre;
+    if (pre) app.wake.waiting(m.phase || app.phase, !(app.room && app.room.solo)); // tela preta já por baixo do fade
     L.leave();
     show(null);
-    $('#hud').classList.remove('hidden');
     $('#diag').classList.toggle('hidden', !(m.test && app.diagOn));
     app.input.enabled = true;
-    if (!app.input.locked && !params.has('e2e')) overlay('clickToPlay', true);
+    if (pre) {
+      // v3: avisa o servidor que carregou; a cena "acordando" começa quando todos carregarem ('go')
+      $('#hud').classList.add('hidden');
+      net.send({ t: 'loaded' });
+      if (pre.stage === 'intro') app.onWakeGo(app.game, pre.left);
+    } else {
+      $('#hud').classList.remove('hidden');
+      if (!app.input.locked && !params.has('e2e')) overlay('clickToPlay', true);
+    }
     app.playing = true; updateMusic();
     if (!app.loop) { app.last = performance.now(); app.loop = true; requestAnimationFrame(frame); }
     if (app.game.p.alive === false) { app.game.deathT = performance.now() - 5000; app.game.deathCam = { yaw: 0, pitch: 0 }; }
   } catch (e) { console.error(e); L.close(); toast('Erro ao iniciar: ' + e.message, 'warn'); show('menu'); }
 }
+// v3: cena "acordando" (sincronizada pelo servidor: 'go' inicia, 'begin' libera a partida)
+app.wake = new WakeScene(app);
+app.onWakeGo = (g, dur) => {
+  if (!g.wakeCam) g.wakeCam = { t0: performance.now() - Math.max(0, 8 - (dur || 8)) * 1000, dur: 8000 };
+  app.wakeRunning = true; updateMusic();
+  app.wake.play(g.phase, dur).then(() => { app.wakeRunning = false; updateMusic(); });
+};
+app.onWakeEnd = (g) => {
+  app.wake.finish(); app.wakeRunning = false;
+  if (app.game !== g) return;
+  $('#hud').classList.remove('hidden');
+  if (!app.input.locked && !params.has('e2e') && g.p.alive) overlay('clickToPlay', true);
+  updateMusic();
+};
 function stopGame(keepHud) {
+  if (app.wake && app.wake.active) app.wake.finish();
   if (app.game) { app.game.dispose(); app.game = null; }
   app.playing = false;
   app.music.setTension(0, false);
@@ -297,8 +321,9 @@ $('#stage').addEventListener('mousedown', () => { const g = app.game; if (g && (
 $('#btnSpectate').addEventListener('click', () => { overlay('death', false); if (app.game) app.game.spectate = app.game.spectate || null; });
 $('#btnDeathMenu').addEventListener('click', () => leaveToMenu());
 $('#btnEscSpectate').addEventListener('click', () => overlay('escaped', false));
-$('#btnAgain').addEventListener('click', () => net.send({ t: 'restart', phase: app.game ? app.game.phase : app.phase }));
-$('#btnNext').addEventListener('click', () => net.send({ t: 'restart', phase: Math.min(3, (app.game ? app.game.phase : 1) + 1) }));
+// v3: o servidor decide a fase: 'next' (venceu → próxima), 'fresh' (venceu a 3 → recomeça na 1) ou repetir a mesma
+$('#btnAgain').addEventListener('click', () => { const g = app.game; const won3 = g && g.phase >= 3 && g.lastResult === 'win'; net.send({ t: 'restart', phase: g ? g.phase : app.phase, fresh: won3 }); });
+$('#btnNext').addEventListener('click', () => net.send({ t: 'restart', next: true, phase: Math.min(3, (app.game ? app.game.phase : 1) + 1) }));
 $('#btnEndLobby').addEventListener('click', () => net.send({ t: 'lobby' }));
 $('#btnEndMenu').addEventListener('click', () => leaveToMenu());
 
@@ -354,9 +379,11 @@ app.ui = {
     $('#endInfo').innerHTML = `<p>${PHASES[s.phase].title} · Duração ${fmtT(s.duration)} · Chaves ${s.keys}/${s.keysNeeded} · Semente <code>${esc(s.seed)}</code></p><table><tr><th>Jogador</th><th>Resultado</th><th>Chaves</th><th>Tempo vivo</th></tr>${s.players.map(p => `<tr><td>${esc(p.name)}${p.id === app.myId ? ' (você)' : ''}</td><td>${p.escaped ? 'escapou' : p.left ? 'saiu' : p.alive ? '—' : 'morto'}</td><td>${p.keys}</td><td>${fmtT(p.survived)}</td></tr>`).join('')}</table>`;
     const isHost = app.room && app.room.hostId === app.myId;
     $('#btnAgain').disabled = !isHost; $('#btnNext').disabled = !isHost; $('#btnEndLobby').disabled = !isHost;
+    if (g) g.lastResult = m.result;
     $('#btnNext').style.display = s.phase < 3 && m.result === 'win' ? '' : 'none';
+    $('#btnNext').textContent = `Próxima fase — Fase ${Math.min(3, s.phase + 1)}`;
     $('#btnEndLobby').style.display = app.room && app.room.solo ? 'none' : '';
-    $('#btnAgain').textContent = m.result === 'win' ? 'Jogar novamente' : 'Tentar novamente';
+    $('#btnAgain').textContent = m.result === 'win' ? (s.phase >= 3 ? 'Jogar de novo desde a Fase 1' : 'Repetir esta fase') : 'Tentar novamente';
     $('#endHint').textContent = isHost ? 'Uma nova partida gera uma nova mansão e novos esconderijos de chave.' : 'Aguardando o anfitrião escolher…';
     overlay('end', true);
   },

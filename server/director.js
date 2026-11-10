@@ -28,7 +28,7 @@ export const DIRECTOR = {
   passByCooldown: [40, 70],
   // v2 "nunca some": se a criatura passar este tempo sem chegar perto (~14 m) de ninguém, o diretor manda uma
   // passagem pela região aproximada dos jogadores mesmo com ameaça baixa (diminui com a ameaça)
-  maxGap: 85, maxGapMenaceCut: 30,
+  maxGap: 70, maxGapMenaceCut: 25,
 };
 
 const clamp01 = (v) => Math.max(0, Math.min(1, v));
@@ -91,8 +91,11 @@ export class Director {
     const menace = this.menace;
     const err = this.errRadius(menace);
     // andar: quanto maior a ameaça, mais provável que o diretor "acerte" o andar
+    // v3: quando ela está "sumida" há tempo demais (regra 'nunca some'), a dica acerta o andar — numa mansão
+    // grande, errar o andar duas vezes seguidas a deixava 2–3 min longe de todos. O raio de erro continua valendo.
     let level = p.level;
-    if (!this.rng.chance(0.4 + 0.6 * menace)) {
+    const overdue = this.overdue;
+    if (!overdue && !this.rng.chance(0.4 + 0.6 * menace)) {
       const opts = [p.level - 1, p.level + 1].filter(l => l >= 0 && l <= 3);
       level = this.rng.pick(opts);
     }
@@ -109,9 +112,10 @@ export class Director {
   // tempo desde que a criatura esteve perto de alguém pela última vez
   get gap() { const c = this.m.creature; return c ? this.m.t - (c.lastNearT || 0) : 0; }
   gapLimit(menace = this.menace) { return DIRECTOR.maxGap - DIRECTOR.maxGapMenaceCut * clamp01(menace); }
+  get overdue() { return this.m.t > 30 && this.gap > this.gapLimit(); }
   wantsPassBy() {
     if (this.inRelief) return false;
-    if (this.m.t > 30 && this.gap > this.gapLimit()) return true; // nunca some por muito tempo
+    if (this.overdue) return true; // nunca some por muito tempo
     return this.menace >= DIRECTOR.passByMenace && this.m.t >= this.nextPassByT;
   }
   passByDone() {

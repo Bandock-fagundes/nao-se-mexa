@@ -53,6 +53,7 @@ export function buildMansion(map, world, M) {
       if (L === 0) return 'floorStone'; if (L === 3) return 'floorPlanks';
       let r = roomOf(L, x, z);
       if (r < 0) for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { r = roomOf(L, x + a, z + b); if (r >= 0) break; }
+      if (r >= 0 && map.rooms[r].look === 'marble') return 'floorMarble'; // v3: mármore rachado no hall
       const f = r >= 0 ? map.rooms[r].floor : 'wood';
       return f === 'stone' ? 'floorStone' : f === 'tile' ? 'floorTile' : f === 'carpet' ? 'floorCarpet' : 'floorWood';
     };
@@ -64,7 +65,7 @@ export function buildMansion(map, world, M) {
       if (t === T.WALL || t === T.VOID || t === T.HOLE || t === T.STAIR) continue;
       const fm = floorMat(x, z);
       const X0 = x * CELL, X1 = X0 + CELL, Z0 = z * CELL, Z1 = Z0 + CELL;
-      const us = fm === 'floorWood' ? 2 : fm === 'floorTile' ? 1.6 : fm === 'floorPlanks' ? 2.4 : fm === 'floorCarpet' ? 1.5 : 3;
+      const us = fm === 'floorWood' ? 2 : fm === 'floorTile' ? 1.6 : fm === 'floorPlanks' ? 2.4 : fm === 'floorCarpet' ? 1.5 : fm === 'floorMarble' ? 2.4 : 3;
       const under = (t === T.LOW) ? 0.7 : 1;
       gb(fm).quad([X0, y0, Z1], [X1, y0, Z1], [X1, y0, Z0], [X0, y0, Z0], [0, 1, 0], [X0 / us, Z1 / us], [X1 / us, Z1 / us], [X1 / us, Z0 / us], [X0 / us, Z0 / us],
         vAO(x, z + 1) * under, vAO(x + 1, z + 1) * under, vAO(x + 1, z) * under, vAO(x, z) * under);
@@ -111,6 +112,7 @@ export function buildMansion(map, world, M) {
         const st = styleOf(nx, nz);
         const top = nt === T.HOLE || nt === T.STAIR ? H : H;
         if (st === 'stone') { face('stone', 0, top, 2.5, 2.5, 0.5, 0.75); continue; }
+        if (st === 'brick') { face('brick', 0, top, 2.0, 2.0, 0.5, 0.78); continue; }
         if (st === 'attic') { face('planks', 0, top, 2.4, 2.4, 0.5, 0.7); continue; }
         if (st === 'tile') { face('wallTile', 0, 1.3, 1.6, 1.6, 0.55, 0.95); face('wallPlain', 1.3, top, 1.4, 1.4, 0.95, 0.7); continue; }
         face('wainscot', 0, 1.0, 1.6, 1.0, 0.5, 0.95);
@@ -131,7 +133,7 @@ export function buildMansion(map, world, M) {
       const X0 = x * CELL, X1 = X0 + CELL, Z0 = z * CELL, Z1 = Z0 + CELL;
       const ya = y0 + dh, yb = y0 + H;
       gb('trim').quadR([X0, ya, Z1], [X1, ya, Z1], [X1, ya, Z0], [X0, ya, Z0], [0, -1, 0], [0, 0], [1, 0], [1, 1], [0, 1], 0.6, 0.6, 0.6, 0.6);
-      const st = styleOf(x, z), pm = st === 'stone' ? 'stone' : st === 'attic' ? 'planks' : (paperMat[st] || 'wallRed');
+      const st = styleOf(x, z), pm = st === 'stone' ? 'stone' : st === 'brick' ? 'brick' : st === 'attic' ? 'planks' : (paperMat[st] || 'wallRed');
       if (alongX) {
         for (const [zz, nz] of [[Z1, 1], [Z0, -1]]) gb(pm).quadR(nz > 0 ? [X1, ya, zz] : [X0, ya, zz], nz > 0 ? [X0, ya, zz] : [X1, ya, zz], nz > 0 ? [X0, yb, zz] : [X1, yb, zz], nz > 0 ? [X1, yb, zz] : [X0, yb, zz], [0, 0, nz], [X1 / 1.25, ya / 1.25], [X0 / 1.25, ya / 1.25], [X0 / 1.25, yb / 1.25], [X1 / 1.25, yb / 1.25], 0.8, 0.8, 0.7, 0.7);
       } else {
@@ -149,24 +151,34 @@ export function buildMansion(map, world, M) {
   // ---------- escadas ----------
   for (const st of map.stairs) {
     const g = new THREE.Group(); levels[st.lower].add(g);
-    const yA = LEVELS[st.lower].y, yB = LEVELS[st.upper].y, rise = yB - yA, N = 24, run = (st.zBot + 1 - st.zTop) * CELL / N;
-    const x0 = st.x0 * CELL, wdt = st.w * CELL, zb = (st.zBot + 1) * CELL;
+    const yA = LEVELS[st.lower].y, yB = LEVELS[st.upper].y, rise = yB - yA, N = 24;
+    const dir = st.dir === 1 ? 1 : -1, len = (Math.abs(st.zTop - st.zBot) + 1) * CELL, run = len / N;
+    const x0 = st.x0 * CELL, wdt = st.w * CELL, zb = dir === 1 ? st.zBot * CELL : (st.zBot + 1) * CELL;
     for (let k = 0; k < N; k++) {
       const top = yA + (k + 1) * rise / N;
-      const zc = zb - (k + 0.5) * run;
+      const zc = zb + dir * (k + 0.5) * run;
       B(g, wdt, top - yA, run, M.darkWood, x0 + wdt / 2, (top + yA) / 2, zc, 0x5a3a26);
-      B(g, wdt + 0.02, 0.035, run + 0.03, M.wood, x0 + wdt / 2, top - 0.015, zc + 0.01, 0x7a5236);
-      B(g, wdt * 0.62, 0.012, run + 0.02, M.fabric, x0 + wdt / 2, top + 0.004, zc, 0x5a1214);
+      B(g, wdt + 0.02, 0.035, run + 0.03, M.wood, x0 + wdt / 2, top - 0.015, zc - dir * 0.01, 0x7a5236);
+      // passadeira vermelha (na escadaria principal, mais larga e com varões de latão)
+      B(g, wdt * (st.grand ? 0.7 : 0.62), 0.012, run + 0.02, M.fabric, x0 + wdt / 2, top + 0.004, zc, st.grand ? 0x6a1014 : 0x5a1214);
+      if (st.grand) C(g, 0.008, 0.008, wdt * 0.74, M.brass, x0 + wdt / 2, top + 0.012, zc - dir * (run / 2 - 0.02), 0xffffff, 6, 0, Math.PI / 2);
     }
-    // corrimão do lado do vão
-    const railX = st.stringer * CELL + (st.stringer > st.x0 ? 0.02 : CELL - 0.02);
-    for (let k = 0; k <= N; k += 3) {
-      const yy = yA + k * rise / N, zz = zb - k * run;
-      C(g, 0.025, 0.03, 0.95, M.darkWood, railX, yy + 0.47, zz, 0x3a2214, 8);
+    const stringers = st.grand ? st.stringers : [st.stringer];
+    for (const sc of stringers) {
+      const railX = sc * CELL + (sc > st.x0 ? 0.02 : CELL - 0.02);
+      for (let k = 0; k <= N; k += st.grand ? 2 : 3) {
+        const yy = yA + k * rise / N, zz = zb + dir * k * run;
+        C(g, 0.025, 0.03, 0.95, M.darkWood, railX + (sc > st.x0 ? -0.05 : 0.05), yy + 0.47, zz, 0x3a2214, 8);
+      }
+      const L2 = Math.hypot(N * run, rise);
+      const rail = mesh(new THREE.BoxGeometry(0.07, 0.06, L2), M.darkWood, 0x3a2214);
+      rail.position.set(railX + (sc > st.x0 ? -0.05 : 0.05), yA + rise / 2 + 0.95, zb + dir * N * run / 2); rail.rotation.x = -dir * Math.atan2(rise, N * run); g.add(rail);
+      if (st.grand) { // pilar de arranque com pinha no pé da escadaria
+        const px = railX + (sc > st.x0 ? -0.06 : 0.06);
+        B(g, 0.16, 1.15, 0.16, M.darkWood, px, yA + 0.575, zb - dir * 0.1, 0x2a160c);
+        S(g, 0.07, M.brass, px, yA + 1.22, zb - dir * 0.1, 0xc89a40, 1, 1.2, 1, 10);
+      }
     }
-    const len = Math.hypot(N * run, rise);
-    const rail = mesh(new THREE.BoxGeometry(0.07, 0.06, len), M.darkWood, 0x3a2214);
-    rail.position.set(railX, yA + rise / 2 + 0.95, zb - N * run / 2); rail.rotation.x = Math.atan2(rise, N * run); g.add(rail);
   }
 
   // ---------- móveis ----------
@@ -188,9 +200,11 @@ export function buildMansion(map, world, M) {
       const parts = g.userData.parts.map((dy, i) => {
         const box = dy.type === 'drawer' ? new THREE.Box3().setFromObject(dy.part).expandByScalar(0.025) : whole;
         res.interact.push({ kind: 'container', id: c.id, part: i, level: p.level, box });
-        return { idx: i, part: dy.part, extra: dy.extra, type: dy.type, amount: dy.amount, anchor: dy.anchor, label: dy.label, open: false, cur: 0, box };
+        return { idx: i, part: dy.part, extra: dy.extra, type: dy.type, amount: dy.amount, anchor: dy.anchor, hang: !!dy.hang, label: dy.label, open: false, cur: 0, box };
       });
-      res.containers[c.id] = { id: c.id, kind: c.kind, level: p.level, parts, box: whole, ax: c.ax, az: c.az, x: c.x, z: c.z, label: parts[0].label };
+      // v3: roupas e ganchinho do guarda-roupa (o jogo esvazia o armário que guarda a chave e mostra o gancho)
+      const clothes = g.userData.clothes || null; if (clothes) clothes.visible = false;
+      res.containers[c.id] = { id: c.id, kind: c.kind, level: p.level, parts, box: whole, ax: c.ax, az: c.az, x: c.x, z: c.z, label: parts[0].label, clothes, hook: g.userData.hook || null, hasKey: false };
     }
   }
   // fusão por material (menos chamadas de desenho)
@@ -299,7 +313,7 @@ export function buildMansion(map, world, M) {
       const mat = M.T.carpets[(dc.v || 0) % 3];
       const m = new THREE.Mesh(new THREE.PlaneGeometry(dc.w, dc.d), new THREE.MeshStandardMaterial({ ...mat, roughness: 1 }));
       m.rotation.x = -Math.PI / 2; if (dc.kind === 'runner' || dc.w > dc.d) m.rotation.z = Math.PI / 2 * (dc.kind === 'runner' ? 1 : 0);
-      if (dc.kind === 'runner') { m.geometry = new THREE.PlaneGeometry(dc.d, dc.w); m.rotation.z = Math.PI / 2; }
+      if (dc.kind === 'runner') { m.geometry = new THREE.PlaneGeometry(dc.d, dc.w); m.rotation.z = dc.alongZ ? 0 : Math.PI / 2; }
       m.position.set(dc.x, y0 + 0.006, dc.z); m.receiveShadow = true; levels[dc.level].add(m);
     } else if (dc.kind === 'curtain_alcove') {
       const [c0, c1] = dc.cells;

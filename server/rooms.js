@@ -2,7 +2,7 @@
 import crypto from 'node:crypto';
 import { Match } from './match.js';
 import { randomSeed } from '../shared/rng.js';
-import { GEN_VERSION, MAX_PLAYERS, NET, PHASES, SERVER } from '../shared/config.js';
+import { MAX_PLAYERS, NET, PHASES, SERVER, MAX_PHASE } from '../shared/config.js';
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const send = (ws, msg) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg)); };
@@ -38,10 +38,16 @@ export class RoomManager {
     if (!pl) return;
     switch (msg.t) {
       case 'ready': pl.ready = !!msg.ready; this.broadcastRoom(room); break;
-      case 'phase': if (room.hostId === pid && room.state !== 'playing' && PHASES[msg.phase]) { room.phase = msg.phase; this.broadcastRoom(room); } break;
+      // v3: escolher a fase é só para a aba TESTAR JOGO; no jogo normal a fase avança sozinha (1 → 2 → 3)
+      case 'phase': if (room.test && room.hostId === pid && room.state !== 'playing' && PHASES[msg.phase]) { room.phase = msg.phase; this.broadcastRoom(room); } break;
+      case 'loaded': if (room.match && room.state === 'playing') room.match.markLoaded(pid); break;
       case 'seed': if (room.test && room.hostId === pid) { room.nextSeed = String(msg.seed || '').slice(0, 40) || null; this.broadcastRoom(room); } break;
       case 'start': this.start(room, pid, msg); break;
-      case 'restart': if (room.hostId === pid && (room.state === 'ended' || room.test)) { if (msg.phase && PHASES[msg.phase]) room.phase = msg.phase; room.nextSeed = (msg.seed && room.test) ? String(msg.seed).slice(0, 40) : null; this.startMatch(room); } break;
+      case 'restart': if (room.hostId === pid && (room.state === 'ended' || room.test)) {
+        if (room.test) { if (msg.phase && PHASES[msg.phase]) room.phase = msg.phase; }
+        else this.advancePhase(room, msg);
+        room.nextSeed = (msg.seed && room.test) ? String(msg.seed).slice(0, 40) : null; this.startMatch(room);
+      } break;
       case 'debug': {
         // somente salas da aba TESTAR JOGO (diagnóstico)
         if (!room.test || !room.match || room.state !== 'playing') return;
@@ -50,7 +56,7 @@ export class RoomManager {
         send(conn.ws, { t: 'dres', ...r });
         break;
       }
-      case 'lobby': if (room.hostId === pid && room.state === 'ended') { room.state = 'lobby'; room.match = null; for (const p of room.players.values()) p.ready = false; this.broadcastRoom(room); this.broadcast(room, { t: 'tolobby' }); } break;
+      case 'lobby': if (room.hostId === pid && room.state === 'ended') { if (!room.test && room.match && room.match.result === 'win') room.phase = Math.min(MAX_PHASE, room.match.phase + 1); room.state = 'lobby'; room.match = null; for (const p of room.players.values()) p.ready = false; this.broadcastRoom(room); this.broadcast(room, { t: 'tolobby' }); } break;
       case 'leave': this.leave(conn); break;
       case 'in': {
         if (room.state !== 'playing' || !room.match) return;
@@ -65,6 +71,14 @@ export class RoomManager {
         break;
       }
     }
+  }
+  // v3: progressão de fases. Vitória → próxima fase (até a 3); 'fresh' (depois da fase 3) → recomeça na 1;
+  // derrota ou 'retry' → repete a mesma fase. O cliente não escolhe a fase.
+  advancePhase(room, msg) {
+    const last = room.match;
+    if (msg.fresh) room.phase = 1;
+    else if (msg.next && last && last.result === 'win') room.phase = Math.min(MAX_PHASE, last.phase + 1);
+    else if (last) room.phase = last.phase;
   }
   roomInfo(room) {
     return {
@@ -97,7 +111,7 @@ export class RoomManager {
   create(conn, msg, solo) {
     if (conn.room) this.leave(conn);
     const code = this.newCode();
-    const room = { code, players: new Map(), hostId: null, phase: PHASES[msg.phase] ? msg.phase : 1, state: 'lobby', test: !!msg.test, solo, match: null, created: Date.now(), nextSeed: msg.seed && msg.test ? String(msg.seed).slice(0, 40) : null, diagAcc: 0, emptySince: null };
+    const room = { code, players: new Map(), hostId: null, phase: (msg.test && PHASES[msg.phase]) ? msg.phase : 1, state: 'lobby', test: !!msg.test, solo, match: null, created: Date.now(), nextSeed: msg.seed && msg.test ? String(msg.seed).slice(0, 40) : null, diagAcc: 0, emptySince: null };
     this.rooms.set(code, room);
     const p = this.addPlayer(room, conn, msg.name);
     room.hostId = p.id;
@@ -127,7 +141,7 @@ export class RoomManager {
     if (room.match && (room.state === 'playing' || room.state === 'ended')) {
       room.match.setConnected(p.id, true);
       const mp = room.match.players.get(p.id);
-      send(conn.ws, { t: 'start', resumed: true, seed: room.match.seed, genVersion: GEN_VERSION, mapHash: room.match.map.hash, phase: room.match.phase, keysNeeded: room.match.keysNeeded, you: mp ? { x: mp.x, z: mp.z, level: mp.level, yaw: mp.yaw, alive: mp.alive, escaped: mp.escaped } : null, state: room.match.fullState(), test: room.test, names: this.names(room) });
+      send(conn.ws, { t: 'start', resumed: true, gen: { ...room.match.gen }, seed: room.match.seed, size: room.match.size, genVersion: room.match.gen.version, mapHash: room.match.map.hash, phase: room.match.phase, keysNeeded: room.match.keysNeeded, you: mp ? { x: mp.x, z: mp.z, level: mp.level, yaw: mp.yaw, alive: mp.alive, escaped: mp.escaped } : null, state: room.match.fullState(), test: room.test, names: this.names(room) });
       if (room.state === 'ended') send(conn.ws, { t: 'end', result: room.match.result, stats: room.match.stats() });
     }
     this.broadcastRoom(room);
@@ -147,13 +161,15 @@ export class RoomManager {
     for (const [id, p] of room.players) if (!p.connected && !p.dcAt) room.players.delete(id);
     const players = [...room.players.values()].filter(p => p.connected).map(p => ({ id: p.id, name: p.name }));
     // keySeed aleatório: as chaves mudam de lugar a cada partida/reinício, mesmo com a mesma semente de casa
-    room.match = new Match({ seed, phase: room.phase, players, test: room.test, keySeed: randomSeed() });
+    // v3: casa compacta/média/grande conforme o número de jogadores; cena "acordando" fora da aba de testes
+    const size = Math.max(1, Math.min(3, players.length));
+    room.match = new Match({ seed, phase: room.phase, players, test: room.test, keySeed: randomSeed(), size, wake: !room.test });
     room.state = 'playing';
     room.lastTick = Date.now();
     for (const p of room.players.values()) {
       const mp = room.match.players.get(p.id);
       if (!mp) continue;
-      send(p.conn && p.conn.ws, { t: 'start', seed, genVersion: GEN_VERSION, mapHash: room.match.map.hash, phase: room.phase, keysNeeded: room.match.keysNeeded, you: { x: mp.x, z: mp.z, level: mp.level, yaw: mp.yaw, alive: true, escaped: false }, state: room.match.fullState(), test: room.test, names: this.names(room) });
+      send(p.conn && p.conn.ws, { t: 'start', gen: { ...room.match.gen }, seed: room.match.seed, size: room.match.size, genVersion: room.match.gen.version, mapHash: room.match.map.hash, phase: room.phase, keysNeeded: room.match.keysNeeded, you: { x: mp.x, z: mp.z, level: mp.level, yaw: mp.yaw, alive: true, escaped: false }, state: room.match.fullState(), test: room.test, names: this.names(room) });
     }
     this.broadcastRoom(room);
   }

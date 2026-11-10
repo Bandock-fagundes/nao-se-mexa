@@ -12,27 +12,27 @@ const SEED = 'fase-dois-3';
 test('F2: comportamentos da fase 1 continuam (visão por movimento, sem ver através de paredes)', () => {
   const m = makeMatch(2, SEED);
   const c = clearCorridor(m, 1, 30);
-  m.debugPlaceCreature(c.x0, c.z, 1, Math.PI / 2);
-  m.debugPlacePlayer('p1', c.x0 + 9, c.z, 1);
+  m.debugPlaceCreature(c.x0, c.z, c.L, Math.PI / 2);
+  m.debugPlacePlayer('p1', c.x0 + 9, c.z, c.L);
   run(m, 2, () => m.applyInput('p1', { x: m.players.get('p1').x, z: m.players.get('p1').z, yaw: 1, fl: false }));
   assert.equal(m.creature.state, 'hold', 'parado e silencioso: não detectado');
   run(m, 1.2, strafe(m, 'p1', 1.2, 0.4));
   assert.ok(['alert', 'chase'].includes(m.creature.state));
   const m2 = makeMatch(2, SEED);
   const w = wallSpot(m2, 1);
-  m2.debugPlaceCreature(w.x, w.zCorr, 1, Math.PI);
-  m2.debugPlacePlayer('p1', w.x, w.zRoom - 1, 1);
-  assert.equal(m2.world.lineOfSight(1, w.x, w.zCorr, w.x, w.zRoom - 1), false);
+  m2.debugPlaceCreature(w.x, w.zCorr, w.L, Math.PI);
+  m2.debugPlacePlayer('p1', w.x, w.zRoom - 1, w.L);
+  assert.equal(m2.world.lineOfSight(w.L, w.x, w.zCorr, w.x, w.zRoom - 1), false);
 });
 
 test('F2: passos de corrida são ouvidos e a criatura investiga a origem aproximada', () => {
   const m = makeMatch(2, SEED);
   const c = clearCorridor(m, 1, 30);
-  m.debugPlaceCreature(c.x0 + 14, c.z, 1, Math.PI / 2); // olhando +x
-  m.debugPlacePlayer('p1', c.x0 + 9, c.z, 1); // 5 m atrás dela: fora do campo de visão
+  m.debugPlaceCreature(c.x0 + 14, c.z, c.L, Math.PI / 2); // olhando +x
+  m.debugPlacePlayer('p1', c.x0 + 9, c.z, c.L); // 5 m atrás dela: fora do campo de visão
   run(m, 0.5, (t, dt) => stepPlayer(m, 'p1', -4.6, 0, dt, { run: true })); // corre (pá pá pá)
-  const basement = m.map.rooms.find(r => r.level === 0 && r.type === 'corridor');
-  m.debugPlacePlayer('p1', (basement.x0 + 3) * 0.5, (basement.z0 + 2) * 0.5, 0); // some sem fazer barulho
+  const away = m.map.rooms.find(r => r.level === (c.L === 2 ? 0 : 2) && r.type !== 'stairs' && r.type !== 'corridor');
+  m.debugPlacePlayer('p1', m.creature.roomPoint(away).x, m.creature.roomPoint(away).z, away.level); // some sem fazer barulho (outro andar)
   run(m, 0.3);
   const cr = m.creature;
   assert.ok(cr.lastSound, 'ouviu algo');
@@ -51,8 +51,8 @@ test('F2: passos de corrida são ouvidos e a criatura investiga a origem aproxim
 test('F2: andar normal não é ouvido nem lado a lado; agachado é silêncio total; a madeira range às vezes', () => {
   const m = makeMatch(2, SEED);
   const c = clearCorridor(m, 1, 30);
-  m.debugPlaceCreature(c.x0, c.z, 1, Math.PI / 2);
-  const at = (d, type) => hearingCheck(m, m.creature, makeSoundEvent(m, type, c.x0 + d, 0, c.z, 1));
+  m.debugPlaceCreature(c.x0, c.z, c.L, Math.PI / 2);
+  const at = (d, type) => hearingCheck(m, m.creature, makeSoundEvent(m, type, c.x0 + d, 0, c.z, c.L));
   assert.equal(at(1, 'step_walk').heard, false, 'andar normal ao lado: não ouve');
   assert.equal(at(1, 'step_crouch').heard, false, 'agachado ao lado: não ouve');
   assert.equal(at(6, 'creak').heard, true, 'rangido no mesmo cômodo: ouve');
@@ -62,13 +62,13 @@ test('F2: andar normal não é ouvido nem lado a lado; agachado é silêncio tot
   const c2 = clearCorridor(m2, 1, 30);
   const cnt = (mode, v) => {
     m2.sounds.length = 0; const seen = {};
-    m2.debugPlacePlayer('p1', c2.x0, c2.z, 1);
+    m2.debugPlacePlayer('p1', c2.x0, c2.z, c2.L);
     let dir = 1;
     run(m2, 12, (t, dt) => { const p = m2.players.get('p1'); if (p.x > c2.x1 - 1) dir = -1; if (p.x < c2.x0 + 1) dir = 1; stepPlayer(m2, 'p1', dir * v, 0, dt, mode); for (const s of m2.sounds.splice(0)) seen[s.type] = (seen[s.type] || 0) + 1; });
     return seen;
   };
   const walk = cnt({}, 2.4), runS = cnt({ run: true }, 4.8), crouch = cnt({ crouch: true }, 1.25);
-  if (m2.world.surfaceAt(1, c2.x0, c2.z) === 'wood') assert.ok((walk.creak || 0) >= 1 && walk.creak < walk.step_walk, 'andando: rangidos ocasionais ' + JSON.stringify(walk));
+  if (m2.world.surfaceAt(c2.L, c2.x0, c2.z) === 'wood') assert.ok((walk.creak || 0) >= 1 && walk.creak < walk.step_walk, 'andando: rangidos ocasionais ' + JSON.stringify(walk));
   assert.ok(!runS.creak && runS.step_run > 10, 'correndo: sem rangido, passos ouvíveis ' + JSON.stringify(runS));
   assert.equal(Object.keys(crouch).filter(k => k !== 'step_crouch').length, 0, 'agachado: nada audível ' + JSON.stringify(crouch));
 });
@@ -81,7 +81,7 @@ test('F2: níveis de som — vermelho (casa toda), amarelo (andar + abaixo), bai
   const lis = (r) => ({ level: r.level, ...mid(r) });
   const ev = (type, r) => ({ type, lvl: SOUND_TYPES[type].lvl, level: r.level, ...mid(r) });
   const g = roomGraph(map);
-  const attic = room(3), basement = room(0, 'corridor'), corr1 = room(1, 'corridor'), corr2 = room(2, 'corridor');
+  const attic = room(3), basement = room(0, 'corridor'), corr1 = room(1, 'hall'), corr2 = room(2, 'gallery'); // v3: hall e galeria no lugar dos corredores
   // vermelho: do sótão ao porão
   assert.equal(soundReaches(map, ev('knock_bucket', attic), lis(basement)).heard, true);
   // amarelo: mesmo andar (qualquer cômodo) e o andar logo abaixo; não acima, nem dois abaixo
@@ -105,11 +105,11 @@ test('F2: níveis de som — vermelho (casa toda), amarelo (andar + abaixo), bai
 test('F2: som distante → corre; perto desacelera; depois circula e confere cômodos vizinhos', () => {
   const m = makeMatch(2, SEED);
   const c = clearCorridor(m, 1, 30);
-  m.debugPlaceCreature(c.x0, c.z, 1, Math.PI / 2);
+  m.debugPlaceCreature(c.x0, c.z, c.L, Math.PI / 2);
   m.creature.setState('patrol'); m.creature.path = null;
   // balde caindo (vermelho) longe, no outro extremo do corredor
   const k = { x: c.x1, z: c.z };
-  m.emitSound('knock_bucket', k.x, 0.3, k.z, 1, { source: 'object' });
+  m.emitSound('knock_bucket', k.x, 0.3, k.z, c.L, { source: 'object' });
   let maxSp = 0, sawRush = false, slowNear = false, sawCheck = false; const rooms = new Set();
   run(m, 30, () => {
     const cr = m.creature;
@@ -146,8 +146,8 @@ test('F2: objetos derrubados atraem a criatura', () => {
 test('F2: a criatura não recebe a posição exata do jogador ao ouvi-lo', () => {
   const m = makeMatch(2, SEED);
   const c = clearCorridor(m, 1, 30);
-  m.debugPlaceCreature(c.x0 + 16, c.z, 1, Math.PI / 2);
-  m.debugPlacePlayer('p1', c.x0 + 9, c.z, 1);
+  m.debugPlaceCreature(c.x0 + 16, c.z, c.L, Math.PI / 2);
+  m.debugPlacePlayer('p1', c.x0 + 9, c.z, c.L);
   run(m, 0.8, (t, dt) => stepPlayer(m, 'p1', -4.6, 0, dt, { run: true }));
   const src = { x: m.creature.invest.srcX, z: m.creature.invest.srcZ };
   // jogador é levado para longe sem fazer barulho: a criatura continua indo à origem do som
@@ -162,11 +162,12 @@ test('F2: a criatura não recebe a posição exata do jogador ao ouvi-lo', () =>
 test('F2: a criatura não persegue sons que não foram detectados', () => {
   const m = makeMatch(2, SEED);
   const c = clearCorridor(m, 1, 30);
-  m.debugPlaceCreature(c.x0, c.z, 1, Math.PI / 2);
+  m.debugPlaceCreature(c.x0, c.z, c.L, Math.PI / 2);
   // som baixo e longe
-  m.emitSound('step_crouch', c.x0 + 9, 0, c.z, 1, { source: 'player' });
-  // passo normal dois andares acima
-  m.emitSound('step_walk', c.x0, LEVELS[3].y, c.z, 3, { source: 'player' });
+  m.emitSound('step_crouch', c.x0 + 9, 0, c.z, c.L, { source: 'player' });
+  // passo normal dois andares acima (ou abaixo, se o trecho for no sótão)
+  const L2 = c.L <= 1 ? c.L + 2 : c.L - 2;
+  m.emitSound('step_walk', c.x0, LEVELS[L2].y, c.z, L2, { source: 'player' });
   run(m, 2);
   assert.equal(m.creature.state, 'hold');
   assert.equal(m.creature.lastSound, null);

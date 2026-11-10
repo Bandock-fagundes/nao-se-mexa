@@ -11,6 +11,13 @@
 <body>
   <div id="app">
     <div id="stage"></div>
+    <!-- v3: cena "acordando" (início de cada fase) -->
+    <div id="wake" class="hidden" aria-live="polite">
+      <div class="wk-lid top"></div><div class="wk-lid bottom"></div>
+      <div class="wk-black"></div>
+      <div class="wk-text"><div class="wk-l1"></div><div class="wk-rule"></div><div class="wk-l2"></div></div>
+      <div class="wk-wait">Aguardando os outros jogadores acordarem…</div>
+    </div>
     <!-- ===== MENU ===== -->
     <section id="menu" class="screen">
       <div class="menu-bg"></div>
@@ -35,13 +42,7 @@
       <div class="panel">
         <h2>Escolha o modo</h2>
         <label class="field">Seu nome <input id="name" maxlength="16" placeholder="Jogador" /></label>
-        <div class="field">Fase
-          <div class="seg" id="phaseSel">
-            <button data-phase="1" class="on">1 — A criatura vê</button>
-            <button data-phase="2">2 — A criatura escuta</button>
-            <button data-phase="3">3 — A criatura fareja</button>
-          </div>
-        </div>
+        <p class="hint phase-note">A partida sempre começa na <b>Fase 1 — ele vê</b>. Escapem para chegar à Fase 2 (ele ouve) e à Fase 3 (ele sente seu cheiro).</p>
         <div class="mode-grid">
           <div class="card"><h3>Solo</h3><p>Você sozinho contra a criatura.</p><button id="btnSolo">Começar solo</button></div>
           <div class="card"><h3>Criar sala</h3><p>Gere um código e convide até 3 amigos.</p><button id="btnCreate">Criar sala multiplayer</button></div>
@@ -63,11 +64,7 @@
         <p class="hint" id="shareHint"></p>
         <div class="row between"><h3>Jogadores <span id="lobbyCount"></span></h3><span id="lobbyConn" class="conn ok">● conectado</span></div>
         <ul id="lobbyPlayers" class="players"></ul>
-        <div class="field">Fase
-          <div class="seg" id="lobbyPhase">
-            <button data-phase="1">1 — Vê</button><button data-phase="2">2 — Escuta</button><button data-phase="3">3 — Fareja</button>
-          </div>
-        </div>
+        <p class="hint" id="lobbyPhaseInfo">Próxima partida: Fase 1 — ele vê</p>
         <div class="row">
           <button id="btnReady">Estou pronto</button>
           <button id="btnStart" class="primary">Iniciar partida</button>

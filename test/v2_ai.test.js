@@ -10,8 +10,8 @@ const SEED = 'ia-v2-1';
 test('IA v2: viu alguém se mexer MUITO longe → vai andando na direção (não dispara na hora)', () => {
   const m = makeMatch(1, SEED);
   const c = clearCorridor(m, 1, 30);
-  m.debugPlaceCreature(c.x0, c.z, 1, Math.PI / 2);
-  m.debugPlacePlayer('p1', c.x0 + AI.stalkRange + 3, c.z, 1);
+  m.debugPlaceCreature(c.x0, c.z, c.L, Math.PI / 2);
+  m.debugPlacePlayer('p1', c.x0 + AI.stalkRange + 3, c.z, c.L);
   run(m, 0.6, strafe(m, 'p1'));
   assert.equal(m.creature.state, 'stalk', 'aproximando-se: ' + m.creature.state);
   // parado: ela segue até o ponto visto, devagar, e não persegue
@@ -21,8 +21,8 @@ test('IA v2: viu alguém se mexer MUITO longe → vai andando na direção (não
   assert.ok(maxSp <= CREATURE.speed.investigate * 1.2, 'anda, não corre (' + maxSp.toFixed(2) + ')');
   // se o jogador volta a se mexer quando ela já está mais perto → percebe e persegue
   const m2 = makeMatch(1, SEED);
-  m2.debugPlaceCreature(c.x0, c.z, 1, Math.PI / 2);
-  m2.debugPlacePlayer('p1', c.x0 + 8, c.z, 1);
+  m2.debugPlaceCreature(c.x0, c.z, c.L, Math.PI / 2);
+  m2.debugPlacePlayer('p1', c.x0 + 8, c.z, c.L);
   run(m2, 1.2, strafe(m2, 'p1'));
   assert.ok(['alert', 'chase'].includes(m2.creature.state), 'perto: alerta/perseguição (' + m2.creature.state + ')');
 });
@@ -30,8 +30,8 @@ test('IA v2: viu alguém se mexer MUITO longe → vai andando na direção (não
 test('IA v2: jogador parado e silencioso não é perseguido; perder a visão por 1 s faz esquecer quem ficou parado', () => {
   const m = makeMatch(1, SEED);
   const c = clearCorridor(m, 1, 30);
-  m.debugPlaceCreature(c.x0, c.z, 1, Math.PI / 2);
-  m.debugPlacePlayer('p1', c.x0 + 7, c.z, 1);
+  m.debugPlaceCreature(c.x0, c.z, c.L, Math.PI / 2);
+  m.debugPlacePlayer('p1', c.x0 + 7, c.z, c.L);
   m.creature.setState('patrol');
   run(m, 4, () => m.applyInput('p1', { x: m.players.get('p1').x, z: m.players.get('p1').z, yaw: 0, fl: false }));
   assert.ok(!['alert', 'chase', 'attack'].includes(m.creature.state), 'parado: ' + m.creature.state);
