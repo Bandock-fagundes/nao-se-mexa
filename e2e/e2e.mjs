@@ -135,6 +135,8 @@ try {
     check('só aquela gaveta abriu (as outras continuam fechadas)', others === 0, 'abertas além dela: ' + others);
     await sleep(2200);
   }
+  // v4: espera a animação de abrir passar de 35% (sob CPU carregada o SwiftShader faz poucos quadros em 2,2 s)
+  if (k.id !== null) await A.waitForFunction((id, part) => window.__game.view.containers[id].parts[part].cur > 0.4, { timeout: 20000 }, k.id, k.part).catch(() => {});
   const kv = await A.evaluate((kid) => window.__game.keyViews[kid].mesh.visible, k.key);
   check('chave revelada fica visível (brilho branco)', kv);
   // mira na própria chave

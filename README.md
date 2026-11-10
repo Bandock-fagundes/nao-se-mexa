@@ -117,6 +117,9 @@ npm test     # node:test — fases 1–3, níveis de som, IA v2, chaves/gavetas/
 node test/simulate.mjs 4 1,2,3          # partidas simuladas com robôs (1 e 3 jogadores)
 node test/simulate.mjs 3 1 frozen       # criatura congelada: confere chaves alcançáveis + saída
 npm run e2e  # navegador real (puppeteer) com 2 páginas + capturas em shots/
+node e2e/perf-probe.mjs antes   # v4: draw calls / triângulos por quadro em 4 pontos da casa (renderer.info)
+node e2e/dynres-probe.mjs       # v4: controlador da resolução dinâmica (real + simulação de GPU com vsync)
+ONLY=hall,wardrobe EXTRA='&res=0.67' node e2e/v3-shots.mjs shots/x   # capturas com render a 67% + upscale/nitidez
 ```
 
 O teste E2E precisa do puppeteer (`npm i -D puppeteer`, não incluído nas dependências para não pesar no deploy).
