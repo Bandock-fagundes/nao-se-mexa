@@ -166,8 +166,8 @@ test('Objetos: esbarrão leve balança; forte derruba com barulho (vidro/metal m
 test('Morte: contato com a criatura mata instantaneamente', () => {
   const m = makeMatch(1, 'morte-1');
   const c = clearCorridor(m, 1, 30);
-  m.debugPlacePlayer('p1', c.x0 + 6, c.z, 1);
-  m.debugPlaceCreature(c.x0 + 6 + CREATURE.contactDist - 0.1, c.z, 1, -Math.PI / 2);
+  m.debugPlacePlayer('p1', c.x0 + 6, c.z, c.L);
+  m.debugPlaceCreature(c.x0 + 6 + CREATURE.contactDist - 0.1, c.z, c.L, -Math.PI / 2);
   m.players.get('p1').lastBodyMoveT = m.t; // o jogador se mexeu (encostou nela)
   m.tick(0.05);
   assert.equal(m.players.get('p1').alive, false);
@@ -178,9 +178,9 @@ test('Morte: contato com a criatura mata instantaneamente', () => {
 test('Morte (v2): jogador PARADO que ela não percebeu não morre por ela passar raspando; ela para e muda de rumo', () => {
   const m = makeMatch(1, 'morte-4');
   const c = clearCorridor(m, 1, 30);
-  m.debugPlacePlayer('p1', c.x0 + 8, c.z, 1);
-  m.debugPlaceCreature(c.x0, c.z, 1, Math.PI / 2);
-  m.creature.setState('patrol'); m.creature.goTo(c.x0 + 14, c.z, 1);
+  m.debugPlacePlayer('p1', c.x0 + 8, c.z, c.L);
+  m.debugPlaceCreature(c.x0, c.z, c.L, Math.PI / 2);
+  m.creature.setState('patrol'); m.creature.goTo(c.x0 + 14, c.z, c.L);
   let sawCloseCall = false;
   run(m, 8, () => { m.applyInput('p1', { x: m.players.get('p1').x, z: m.players.get('p1').z, yaw: 0, fl: false }); if (m.creature.tension) sawCloseCall = true; });
   assert.equal(m.players.get('p1').alive, true, 'continua vivo');
@@ -191,8 +191,8 @@ test('Morte: não ocorre através de paredes', () => {
   const m = makeMatch(1, 'morte-2');
   const w = wallSpot(m, 1); assert.ok(w);
   // centros a ~1,0 m, mas com a parede (0,5 m) entre eles
-  m.debugPlacePlayer('p1', w.x, w.zRoom + 0.0, 1);
-  m.debugPlaceCreature(w.x, w.zCorr - 0.0, 1, Math.PI);
+  m.debugPlacePlayer('p1', w.x, w.zRoom + 0.0, w.L);
+  m.debugPlaceCreature(w.x, w.zCorr - 0.0, w.L, Math.PI);
   const d = Math.hypot(0, w.zCorr - w.zRoom);
   assert.ok(d <= CREATURE.contactDist, 'perto o bastante para contato se não houvesse parede (' + d + ')');
   m.tick(0.05); m.tick(0.05);
@@ -204,7 +204,7 @@ test('Morte: não ocorre através de paredes', () => {
 test('Morte: jogador morto não interage, não emite som/cheiro e não é percebido (espectador)', () => {
   const m = makeMatch(3, 'morte-3', 2);
   const c = clearCorridor(m, 1, 30);
-  m.debugPlacePlayer('p1', c.x0 + 6, c.z, 1);
+  m.debugPlacePlayer('p1', c.x0 + 6, c.z, c.L);
   m.killPlayer(m.players.get('p1'), 'teste');
   const p = m.players.get('p1');
   const r = m.interact('p1', { kind: 'door', id: 0 });
@@ -212,7 +212,7 @@ test('Morte: jogador morto não interage, não emite som/cheiro e não é perceb
   const before = m.sounds.length, scent = m.scent.size;
   for (let i = 0; i < 20; i++) { assert.ok(m.applyInput('p1', { x: p.x + i * 0.1, z: p.z }).ignored); m.tick(0.05); }
   assert.equal(m.sounds.length, before); assert.equal(m.scent.size, scent);
-  m.debugPlaceCreature(c.x0, c.z, 1, Math.PI / 2);
+  m.debugPlaceCreature(c.x0, c.z, c.L, Math.PI / 2);
   assert.equal(visionCheck(m, m.creature, p).visible, false);
   assert.equal(m.ended, false, 'partida continua com o outro jogador');
 });
@@ -220,7 +220,7 @@ test('Morte: jogador morto não interage, não emite som/cheiro e não é perceb
 test('Validação de movimento: velocidade impossível e atravessar paredes são corrigidos', () => {
   const m = makeMatch(1, 'mov-1');
   const w = wallSpot(m, 1);
-  m.debugPlacePlayer('p1', w.x, w.zRoom, 1);
+  m.debugPlacePlayer('p1', w.x, w.zRoom, w.L);
   m.tick(0.05);
   let r = m.applyInput('p1', { x: w.x, z: w.zCorr + 0.5 });
   assert.ok(r.correction, 'atravessar parede → correção');

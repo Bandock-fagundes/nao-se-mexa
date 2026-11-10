@@ -1,9 +1,9 @@
 // Sessão de jogo no cliente: mundo 3D, jogador local (predição), colegas e criatura interpolados,
 // interações, áudio posicional, HUD, espectador e painel de diagnóstico (modo teste).
 import * as THREE from 'three';
-import { generateMansion } from '../../shared/mapgen.js';
+import { generateFromParams } from '../../shared/mapgen.js';
 import { World, cellOf } from '../../shared/world.js';
-import { PLAYER, LEVELS, PHASES, CELL, T, W, D } from '../../shared/config.js';
+import { PLAYER, LEVELS, PHASES, CELL, T, W, D, GEN_VERSION } from '../../shared/config.js';
 import { buildMansion, LightPool, flicker } from './render/mansion.js';
 import { buildCreature } from './render/creature.js';
 import { buildHand, HandAnimator } from './render/hand.js';
@@ -26,6 +26,7 @@ function ghostTexture() {
   return new THREE.CanvasTexture(c);
 }
 
+const smoothK = (t) => { const u = Math.max(0, Math.min(1, (t - 0.35) / 0.6)); return u * u * (3 - 2 * u); };
 const lerpA = (a, b, t) => { let d = b - a; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; return a + d * t; };
 const ORD = ['primeira', 'segunda', 'terceira'];
 const NAMES_KNOCK = { vase: 'vaso', bucket: 'balde de metal', bottles: 'garrafas', candelabrum: 'candelabro', box: 'caixinha' };
@@ -35,8 +36,14 @@ export class Game {
     this.app = app; this.R = app.renderer; this.net = app.net; this.audio = app.audio; this.ui = app.ui;
     this.myId = app.myId; this.test = !!msg.test;
     this.seed = msg.seed; this.phase = msg.phase; this.keysNeeded = msg.keysNeeded; this.names = msg.names || {};
-    this.map = generateMansion(msg.seed);
-    this.hashOk = this.map.hash === msg.mapHash;
+    // v3: gera EXATAMENTE com os parâmetros que o servidor usou (msg.gen), sem padrões do cliente
+    this.gen = msg.gen || (msg.state && msg.state.gen);
+    if (!this.gen) throw new Error('o servidor não mandou os parâmetros do mapa (versões diferentes). Recarregue a página.');
+    this.genVersionOk = this.gen.version === GEN_VERSION;
+    this.map = generateFromParams(this.gen);
+    // v3: cena "acordando" — parado até o servidor liberar ('begin')
+    this.frozen = !!(msg.state && msg.state.pre); this.wakeCam = null;
+    this.hashOk = this.genVersionOk && this.map.hash === msg.mapHash;
     this.world = new World(this.map);
     const M = app.M;
     this.view = buildMansion(this.map, this.world, M);
@@ -158,6 +165,8 @@ export class Game {
         if (e.by === this.myId && e.how === 'esbarrou') this.toast('Você esbarrou em algo… barulho!', 'warn');
         break;
       }
+      case 'go': this.wakeCam = { t0: performance.now(), dur: (e.intro || 8) * 1000 }; if (this.app.onWakeGo) this.app.onWakeGo(this, e.intro); break;
+      case 'begin': this.frozen = false; this.wakeCam = null; if (this.app.onWakeEnd) this.app.onWakeEnd(this); break;
       case 'exit': this.exitOpen = true; this.world.exitOpen = true; V.exit.open = true; this.toast(`${e.by === this.myId ? 'Você destrancou' : e.name + ' destrancou'} a saída! Fujam!`, 'key'); break;
       case 'death': {
         // v2: a morte de um colega NÃO é anunciada — só quem achar o corpo fica sabendo.
@@ -236,7 +245,8 @@ export class Game {
     const active = p.alive && !p.escaped && !this.ended;
     // ----- olhar (mouse) -----
     const m = inp.takeMouse();
-    if (active && !this.paused) {
+    const wk = this.wakeK();
+    if (active && !this.paused && (!this.frozen || wk > 0.8)) {
       const sens = 0.0022 * (st.sensitivity || 1);
       p.yaw -= m.x * sens; p.pitch -= m.y * sens * (st.invertY ? -1 : 1);
       p.pitch = Math.max(-1.45, Math.min(1.45, p.pitch));
@@ -244,8 +254,9 @@ export class Game {
     // ----- movimento -----
     let speed = 0;
     if (active) {
-      const mv = (this.paused || this.typing) ? { f: 0, s: 0 } : (this.scripted || inp.move());
-      const crouch = !this.paused && (this.scriptCrouch ?? inp.crouch);
+      const hold = this.paused || this.typing || this.frozen;
+      const mv = hold ? { f: 0, s: 0 } : (this.scripted || inp.move());
+      const crouch = !hold && (this.scriptCrouch ?? inp.crouch);
       const wantRun = !this.paused && (this.scriptRun ?? inp.run) && !crouch && mv.f > 0 && !p.exhausted;
       let target = crouch ? PLAYER.crouch : wantRun ? PLAYER.run : PLAYER.walk;
       if (mv.f < 0 && !crouch) target = Math.min(target, PLAYER.walk * 0.85);
@@ -268,7 +279,7 @@ export class Game {
       p.crouch = crouch;
       p.crouchK += ((crouch ? 1 : 0) - p.crouchK) * Math.min(1, dt * 9);
       // pulo
-      if ((inp.down('Space') || this.scriptJump) && p.grounded && !crouch && !this.paused) { p.vy = PLAYER.jumpV; p.grounded = false; p.jumps++; this.scriptJump = false; }
+      if ((inp.down('Space') || this.scriptJump) && p.grounded && !crouch && !hold) { p.vy = PLAYER.jumpV; p.grounded = false; p.jumps++; this.scriptJump = false; }
       if (!p.grounded) {
         p.vy -= PLAYER.gravity * dt; p.jumpY += p.vy * dt;
         if (p.jumpY <= 0) { p.jumpY = 0; p.vy = 0; p.grounded = true; p.lands++; this.playStep(true); }
@@ -284,7 +295,7 @@ export class Game {
     p.y = this.world.floorY(p.level, p.x, p.z);
     // ----- envio ao servidor (20 Hz) -----
     this.sendAcc += dt;
-    if (this.sendAcc >= 0.05 && active) {
+    if (this.sendAcc >= 0.05 && active && !this.frozen) {
       this.sendAcc = 0;
       this.net.send({ t: 'in', x: +p.x.toFixed(3), z: +p.z.toFixed(3), level: p.level, yaw: +p.yaw.toFixed(3), pitch: +p.pitch.toFixed(3), crouch: p.crouch, run: !!p.running, fl: p.fl, jump: p.jumps, land: p.lands });
     }
@@ -305,8 +316,10 @@ export class Game {
         cam.rotation.set(this.deathCam.pitch * (1 - k) + 0.5 * k, this.deathCam.yaw, k * 1.2, 'YXZ');
         cam.position.x += (Math.random() - 0.5) * 0.06 * (1 - k); cam.position.y += (Math.random() - 0.5) * 0.06 * (1 - k);
       } else {
-        cam.position.set(p.x, p.y + eye + bob + p.jumpY, p.z);
-        cam.rotation.set(p.pitch, p.yaw, 0, 'YXZ');
+        // v3: acordando — começa caído/encolhido, olhando um pouco para cima, e vai se levantando
+        const wl = this.wakeCam ? 1 - smoothK(wk) : (this.frozen ? 1 : 0);
+        cam.position.set(p.x, p.y + eye + bob + p.jumpY - wl * 1.05, p.z);
+        cam.rotation.set(p.pitch + wl * 0.42, p.yaw + wl * 0.25, wl * 0.32, 'YXZ');
       }
     } else {
       // espectador: segue um sobrevivente
@@ -323,14 +336,21 @@ export class Game {
     for (const lp of this.view.flickerMeshes) { const f = flicker(lp, this.t); if (lp.bulb) lp.bulb.material.emissiveIntensity = 1.6 * f; if (lp.bulbs) lp.bulbs[0].material.emissiveIntensity = 1.6 * f; }
     for (const fl of this.view.flames) { fl.scale.y = 0.8 + 0.3 * Math.sin(this.t * 11 + fl.id) * Math.sin(this.t * 4.3 + fl.id); fl.rotation.y += dt * 0.6; }
     // ----- lanterna local -----
-    const showHand = active;
+    const showHand = active && (!this.frozen || wk > 0.85);
     this.hand.root.visible = showHand;
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(cam.quaternion);
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(cam.quaternion);
     const lensPos = cam.position.clone().addScaledVector(right, 0.12).addScaledVector(up, -0.1).addScaledVector(fwd, 0.05);
     const flOn = p.fl && active;
-    this.spot.intensity = flOn ? 40 : 0;
+    // lanterna perto de superfície (bilhete, quadro, parede, mesa a menos de ~1,5 m): reduz a intensidade
+    // na proporção do quadrado da distância, para a luz não "estourar" em branco quando se chega perto para ler
+    if (flOn) {
+      const d = this.flashNearDist(cam.position, fwd, camLevel);
+      const target = Math.max(0.1, Math.min(1, (d / 1.5) * (d / 1.5)));
+      this.flK = (this.flK ?? 1) + (target - (this.flK ?? 1)) * Math.min(1, dt * 10);
+    }
+    this.spot.intensity = flOn ? 40 * (this.flK ?? 1) : 0;
     this.spot.position.copy(lensPos);
     this.spot.target.position.copy(cam.position).addScaledVector(fwd, 10).addScaledVector(right, -0.25);
     this.beam.visible = flOn;
@@ -349,7 +369,7 @@ export class Game {
     this.updateXray(dt); this.updateReader();
     this.drawWave();
     // ----- interação -----
-    this.target = active && !this.paused ? this.findTarget() : null;
+    this.target = active && !this.paused && !this.frozen ? this.findTarget() : null;
     this.ui.setPrompt(this.target ? this.target.text : '');
     // ----- áudio -----
     this.audio.setListener(cam.position, fwd, up);
@@ -367,6 +387,8 @@ export class Game {
       vg.style.opacity = !p.alive && !deathOpen && !recent ? '0.6' : '';
     }
   }
+  // progresso da cena de acordar (0 → 1); 1 quando não há cena
+  wakeK() { if (!this.wakeCam) return this.frozen ? 0 : 1; return Math.max(0, Math.min(1, (performance.now() - this.wakeCam.t0) / this.wakeCam.dur)); }
   toggleFlashlight() {
     if (!this.p.alive || this.p.escaped) return;
     this.p.fl = !this.p.fl;
@@ -413,7 +435,8 @@ export class Game {
         if (ray.distanceToPoint(it.box.getCenter(new THREE.Vector3())) < ray.distanceToPoint(best.box.getCenter(new THREE.Vector3()))) { bd = Math.min(bd, d); best = it; }
         return;
       }
-      if (d < Math.min(bd, maxD) || (it.kind === 'key' && d < maxD && best && best.kind === 'container' && d < bd + 0.35)) { bd = d; best = it; }
+      // chave aberta à vista tem prioridade sobre o móvel onde está (pendurada no fundo do guarda-roupa: até 0,6 m atrás da porta)
+      if (d < Math.min(bd, maxD) || (it.kind === 'key' && d < maxD && best && best.kind === 'container' && d < bd + 0.6)) { bd = d; best = it; }
     };
     for (const it of this.view.interact) {
       if (it.level !== this.p.level) continue;
@@ -497,7 +520,14 @@ export class Game {
       const o = k.spot;
       if (o.type === 'part') {
         const pt = this.view.containers[o.c] && this.view.containers[o.c].parts[o.part];
-        if (pt && pt.anchor) { mesh.rotation.set(-Math.PI / 2, 0, 0.6); pt.anchor.add(mesh); }
+        const cv = this.view.containers[o.c];
+        if (pt && pt.anchor) {
+          // v3: guarda-roupas/armários — chave pendurada num ganchinho no meio, armário vazio (sem roupas)
+          if (pt.hang) { mesh.rotation.set(0, 0, -Math.PI / 2); mesh.position.set(0, 0, 0); if (cv.hook) cv.hook.visible = true; if (cv.clothes) { cv.clothes.removeFromParent(); cv.clothes = null; } }
+          else mesh.rotation.set(-Math.PI / 2, 0, 0.6);
+          pt.anchor.add(mesh);
+        }
+        if (cv) cv.hasKey = true;
         kv = { id: k.id, mesh, spot: o, level: this.map.containers[o.c].level, part: pt };
       } else {
         const sf = this.map.surfaces[o.s];
@@ -506,8 +536,8 @@ export class Game {
         // raios de cima para baixo na argola, no meio e na ponta da chave; fica na maior altura encontrada
         let top = sf.y;
         const lvl = this.view.levels[sf.level]; lvl.updateMatrixWorld(true);
-        const rc = new THREE.Raycaster(); const ang = (sf.id * 1.7) % 6.28;
-        for (const u of [-0.02, 0.12, 0.3]) {
+        const rc = new THREE.Raycaster(); rc.camera = this.app.renderer.camera; const ang = (sf.id * 1.7) % 6.28; // halos (Sprite) exigem câmera no raio
+        for (const u of [-0.01, 0.02, 0.05]) {
           const px = sf.x + Math.cos(ang) * u, pz = sf.z - Math.sin(ang) * u;
           rc.set(new THREE.Vector3(px, sf.y + 0.6, pz), new THREE.Vector3(0, -1, 0)); rc.far = 0.7;
           const hit = rc.intersectObjects(lvl.children, true).find(h => h.object.isMesh && !h.object.isSprite);
@@ -566,14 +596,21 @@ export class Game {
         this.foundBodies.add(sp.id); this.toast(`Você encontrou o corpo de ${this.name(sp.id)}…`, 'death'); this.audio.play('stinger', null, { volume: 0.45 });
       }
     }
-    // brilho das chaves: branco, piscando sutil
+    // v3: brilho DOURADO pulsante, só quando a chave está no campo de visão da câmera (e perto o bastante)
+    const cam = this.R.camera; cam.updateMatrixWorld();
+    this._pm = (this._pm || new THREE.Matrix4()).multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+    const fr = (this._fr || (this._fr = new THREE.Frustum())).setFromProjectionMatrix(this._pm);
+    const wp = this._kp || (this._kp = new THREE.Vector3());
     for (const kv of this.keyViews) {
       if (!kv) continue;
       const vis = kv.state === 'placed' && (!kv.part || (kv.part.open && kv.part.cur > 0.35));
       kv.mesh.visible = vis;
-      if (vis && kv.mesh.userData.halo) kv.mesh.userData.halo.material.opacity = 0.35 + 0.35 * (0.5 + 0.5 * Math.sin(t * 3.2 + kv.id));
+      const halo = kv.mesh.userData.halo; if (!halo) continue;
+      let on = false;
+      if (vis) { kv.mesh.getWorldPosition(wp); const d = wp.distanceTo(cam.position); on = d < 14 && fr.containsPoint(wp); if (on) { const pulse = 0.5 + 0.5 * Math.sin(t * 3.0 + kv.id * 1.7); halo.material.opacity = 0.4 + 0.5 * pulse; const sc = Math.min(0.34, 0.08 + d * 0.03) * (0.9 + 0.2 * pulse); halo.scale.set(sc, sc, 1); halo.material.rotation = t * 0.35 + kv.id; } }
+      halo.visible = on;
     }
-    if (this.app.M.keyGold) { this.app.M.keyGold.emissive.setHex(0xfff4e0); this.app.M.keyGold.emissiveIntensity = 0.7 + 0.5 * (0.5 + 0.5 * Math.sin(t * 3.2)); }
+    if (this.app.M.keyGold) { this.app.M.keyGold.emissive.setHex(0xffa628); this.app.M.keyGold.emissiveIntensity = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(t * 3.0)); }
   }
   pushWave(lvl, mine) {
     this.waves.push({ lvl, t0: this.t, mine });
@@ -616,6 +653,8 @@ export class Game {
     }
     for (const cv of V.containers) {
       if (!cv) continue;
+      // v3: roupas só são desenhadas com a porta aberta (menos chamadas de desenho com tudo fechado)
+      if (cv.clothes) { const op = cv.parts[0].cur > 0.01 || cv.parts[0].open; if (cv.clothes.visible !== op) cv.clothes.visible = op; }
       for (const c of cv.parts) {
         const tgt = c.open ? 1 : 0;
         if (Math.abs(c.cur - tgt) < 0.001) continue;
@@ -707,6 +746,19 @@ export class Game {
     }
     for (; si < this.remoteSpots.length; si++) { this.remoteSpots[si].s.intensity = 0; this.remoteSpots[si].c.visible = false; }
   }
+  // distância (m) até a primeira superfície à frente da câmera — marcha barata pela grade (paredes, móveis
+  // altos/baixos, piso e teto); 9 = nada perto
+  flashNearDist(pos, fwd, L) {
+    const lv = LEVELS[L]; if (!lv) return 9;
+    for (let s = 0.12; s <= 1.6; s += 0.08) {
+      const x = pos.x + fwd.x * s, y = pos.y + fwd.y * s - lv.y, z = pos.z + fwd.z * s;
+      if (y <= 0.02 || y >= lv.h - 0.02) return s;
+      const t = this.world.cell(L, cellOf(x), cellOf(z));
+      if (t === T.LOW ? y < 1.1 : this.world.blocksSight(L, cellOf(x), cellOf(z))) return s;
+    }
+    return 9;
+  }
+
   spectatorCam(dt) {
     const cam = this.R.camera;
     const alive = this.lastSnap ? this.lastSnap.players.filter(q => q.alive && !q.escaped && q.id !== this.myId) : [];

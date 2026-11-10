@@ -67,7 +67,7 @@ async function startMatch(A, B) {
   A.send({ t: 'start' });
   const sa = await A.wait(m => m.t === 'start', 8000, 'start A'), sb = await B.wait(m => m.t === 'start', 8000, 'start B');
   // estaciona a criatura longe para cenários controlados
-  const map = generateMansion(sa.seed);
+  const map = generateMansion(sa.seed, { size: sa.size });
   A.send({ t: 'debug', cmd: 'creature', x: map.creatureSpawn.x, z: map.creatureSpawn.z, level: map.creatureSpawn.level, state: 'hold' });
   await sleep(150);
   return { sa, sb, map };
@@ -77,7 +77,7 @@ test('MP: dois clientes entram na mesma sala, mesma semente/mapa, movimento sinc
   const { A, B } = await twoPlayers(1);
   const { sa, sb } = await startMatch(A, B);
   assert.equal(sa.seed, sb.seed); assert.equal(sa.mapHash, sb.mapHash);
-  assert.equal(generateMansion(sa.seed).hash, sa.mapHash, 'cliente gera o mesmo mapa a partir da semente');
+  assert.equal(sa.size, 2, "2 jogadores → mansão média"); assert.equal(generateMansion(sa.seed, { size: sa.size }).hash, sa.mapHash, 'cliente gera o mesmo mapa a partir da semente');
   // A anda 1 m para o norte em passos válidos
   let x = sa.you.x, z = sa.you.z;
   for (let i = 0; i < 12; i++) { z += 0.1; A.send({ t: 'in', x, z, level: 1, yaw: Math.PI, pitch: 0, fl: true }); await sleep(55); }

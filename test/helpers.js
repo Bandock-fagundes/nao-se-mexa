@@ -1,6 +1,6 @@
 // Utilidades dos testes: partidas controladas e localização de trechos do mapa.
 import { Match } from '../server/match.js';
-import { CELL, T, W, D, ROWS, PLAYER } from '../shared/config.js';
+import { CELL, T, W, D, PLAYER } from '../shared/config.js';
 
 export function makeMatch(phase = 1, seed = 'teste-1', nPlayers = 1) {
   const players = [];
@@ -12,29 +12,37 @@ export function makeMatch(phase = 1, seed = 'teste-1', nPlayers = 1) {
   return m;
 }
 export const cc = (c) => (c + 0.5) * CELL;
-// trecho reto e livre do corredor do térreo (linha central), sem portas nem móveis
+// v3: trecho reto e livre (3 células de largura, ao longo de x) para cenários controlados. A planta nova quase não
+// tem corredores no térreo: procura primeiro no andar pedido e depois nos outros (o corredor de serviço do porão e
+// a passarela do sótão continuam longos). Devolve também o andar (c.L) — os testes usam c.L.
 export function clearCorridor(m, L = 1, len = 30) {
-  const lv = m.map.levels[L];
-  for (const row of [ROWS.corrA + 1, ROWS.corrA + 2]) {
-    let start = null;
-    for (let x = lv.fx0; x <= lv.fx1; x++) {
-      let ok = true;
-      for (let dz = -1; dz <= 1; dz++) { const t = lv.grid[(row + dz) * W + x]; if (t !== T.FLOOR) ok = false; }
-      if (ok) { if (start === null) start = x; if (x - start + 1 >= len + 4) return { L, z: cc(row) + 0.25, x0: cc(start + 2), x1: cc(x - 2), row }; }
-      else start = null;
+  const order = [L, 0, 3, 1, 2].filter((v, i, a) => a.indexOf(v) === i);
+  for (const LL of order) {
+    const lv = m.map.levels[LL];
+    for (let row = 2; row < D - 2; row++) {
+      let start = null;
+      for (let x = lv.fx0; x <= lv.fx1; x++) {
+        let ok = true;
+        for (let dz = -1; dz <= 1; dz++) { const t = lv.grid[(row + dz) * W + x]; if (t !== T.FLOOR) ok = false; }
+        if (ok) { if (start === null) start = x; if (x - start + 1 >= len + 4) return { L: LL, z: cc(row) + 0.25, x0: cc(start + 2), x1: cc(x - 2), row }; }
+        else start = null;
+      }
     }
   }
   return null;
 }
-// coluna onde a parede sul do corredor é sólida (sem porta) com sala livre atrás
+// parede reta (sem porta) ao longo de x, com cômodo livre dos dois lados: zRoom = lado sul, zCorr = lado norte
 export function wallSpot(m, L = 1) {
-  const lv = m.map.levels[L], g = (x, z) => lv.grid[z * W + x];
-  for (let x = lv.fx0 + 4; x < lv.fx1 - 4; x++) {
-    let ok = true;
-    for (let k = -3; k <= 3; k++) if (g(x + k, ROWS.wallS) !== T.WALL) ok = false;
-    for (let k = -1; k <= 1; k++) for (const z of [ROWS.wallS - 1, ROWS.wallS - 2]) if (g(x + k, z) !== T.FLOOR) ok = false;
-    for (let k = -2; k <= 2; k++) for (const z of [ROWS.corrA, ROWS.corrA + 1, ROWS.corrA + 2]) if (g(x + k, z) !== T.FLOOR) ok = false;
-    if (ok) return { L, x: cc(x), zRoom: cc(ROWS.wallS - 1), zCorr: cc(ROWS.corrA) };
+  const order = [L, 0, 2, 3].filter((v, i, a) => a.indexOf(v) === i);
+  for (const LL of order) {
+    const lv = m.map.levels[LL], g = (x, z) => lv.grid[z * W + x];
+    for (let z = 3; z < D - 4; z++) for (let x = lv.fx0 + 4; x < lv.fx1 - 4; x++) {
+      let ok = true;
+      for (let k = -3; k <= 3 && ok; k++) if (g(x + k, z) !== T.WALL) ok = false;
+      for (let k = -1; k <= 1 && ok; k++) for (const zz of [z - 1, z - 2]) if (g(x + k, zz) !== T.FLOOR) ok = false;
+      for (let k = -2; k <= 2 && ok; k++) for (const zz of [z + 1, z + 2, z + 3]) if (g(x + k, zz) !== T.FLOOR) ok = false;
+      if (ok) return { L: LL, x: cc(x), zRoom: cc(z - 1), zCorr: cc(z + 1) };
+    }
   }
   return null;
 }

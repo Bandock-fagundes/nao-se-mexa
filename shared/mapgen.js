@@ -1,23 +1,29 @@
 // Gerador procedural controlado da mansão (determinístico por semente + versão).
 // Mesmo módulo é usado pelo servidor e pelo cliente.
 import { makeRng, hashString } from './rng.js';
-import { GEN_VERSION, FALLBACK_SEED, CELL, W, D, ROWS, STAIR_LEN, STAIR_W, STAIR_SLOT, LEVELS, T } from './config.js';
+import { GEN_VERSION, FALLBACK_SEED, CELL, W, D, ROWS, STAIR_LEN, STAIR_W, STAIR_SLOT, LEVELS, T, GRAND_STAIR_W, MANSION_SIZES } from './config.js';
 
 export const ROOM_INFO = {
-  hall: { name: 'Hall de entrada', floor: 'wood', wall: 'red' },
-  living: { name: 'Sala principal', floor: 'wood', wall: 'green' },
+  // floor = acústica (passos/rangidos); look = desenho do piso (v3: madeira escura envelhecida, mármore rachado no hall)
+  hall: { name: 'Hall de entrada', floor: 'tile', wall: 'red', look: 'marble' },
+  gallery: { name: 'Galeria', floor: 'wood', wall: 'green' },
+  living: { name: 'Sala de estar', floor: 'wood', wall: 'green' },
+  ballroom: { name: 'Salão de baile', floor: 'wood', wall: 'gold' },
   dining: { name: 'Sala de jantar', floor: 'wood', wall: 'red' },
-  kitchen: { name: 'Cozinha', floor: 'tile', wall: 'plain' },
-  pantry: { name: 'Despensa', floor: 'stone', wall: 'plain' },
+  kitchen: { name: 'Cozinha', floor: 'tile', wall: 'brick' },
+  pantry: { name: 'Despensa', floor: 'stone', wall: 'brick' },
   study: { name: 'Escritório', floor: 'wood', wall: 'green' },
   bedroom: { name: 'Quarto', floor: 'carpet', wall: 'blue' },
-  master: { name: 'Quarto principal', floor: 'carpet', wall: 'red' },
+  master: { name: 'Suíte principal', floor: 'carpet', wall: 'red' },
   bathroom: { name: 'Banheiro', floor: 'tile', wall: 'tile' },
   music: { name: 'Sala de música', floor: 'wood', wall: 'gold' },
-  library: { name: 'Biblioteca (sala adicional)', floor: 'wood', wall: 'green' },
+  library: { name: 'Biblioteca', floor: 'wood', wall: 'green' },
   nursery: { name: 'Quarto infantil', floor: 'carpet', wall: 'gold' },
   linen: { name: 'Rouparia', floor: 'wood', wall: 'plain' },
   storage: { name: 'Depósito', floor: 'wood', wall: 'plain' },
+  servant: { name: 'Quarto dos empregados', floor: 'wood', wall: 'plain' },
+  conservatory: { name: 'Jardim de inverno', floor: 'tile', wall: 'green', look: 'marble' },
+  chapel: { name: 'Capela', floor: 'stone', wall: 'stone' },
   corridor: { name: 'Corredor', floor: 'wood', wall: 'red' },
   stairs: { name: 'Escadaria', floor: 'wood', wall: 'red' },
   cellar: { name: 'Adega', floor: 'stone', wall: 'stone' },
@@ -30,17 +36,22 @@ export const ROOM_INFO = {
 // Móveis: w = largura ao longo da parede, d = profundidade (células de 0,5 m)
 const F = (kind, w, d, block, n, opts = {}) => ({ kind, w, d, block, n, p: 1, place: 'wall', ...opts });
 const TEMPLATES = {
-  hall: [F('cabinet', 2, 1, 'TALL', [1, 1], { container: 'wardrobe' }), F('console', 3, 1, 'LOW', [1, 2], { container: 'drawer' }), F('clock', 1, 1, 'TALL', [1, 1]), F('bench', 3, 1, 'LOW', [0, 1]), F('plant', 1, 1, 'LOW', [1, 2])],
-  living: [F('fireplace', 4, 1, 'TALL', [1, 1]), F('bookshelf', 3, 1, 'TALL', [1, 2], { container: 'shelf' }), F('sofa', 4, 2, 'LOW', [1, 1]), F('armchair', 2, 2, 'LOW', [1, 2]), F('coffee_table', 3, 2, 'LOW', [1, 1], { place: 'center' }), F('cabinet', 2, 1, 'TALL', [0, 1], { container: 'wardrobe' }), F('side_table', 1, 1, 'LOW', [1, 1], { container: 'drawer' }), F('plant', 1, 1, 'LOW', [0, 1])],
+  hall: [F('cabinet', 2, 1, 'TALL', [1, 2], { container: 'wardrobe' }), F('console', 3, 1, 'LOW', [2, 3], { container: 'drawer' }), F('clock', 1, 1, 'TALL', [1, 1]), F('statue', 1, 1, 'TALL', [2, 3]), F('bench', 3, 1, 'LOW', [1, 2]), F('plant', 1, 1, 'LOW', [2, 4]), F('armchair', 2, 2, 'LOW', [0, 2])],
+  gallery: [F('statue', 1, 1, 'TALL', [2, 4]), F('bench', 3, 1, 'LOW', [2, 3]), F('console', 3, 1, 'LOW', [1, 2], { container: 'drawer' }), F('china_cabinet', 3, 1, 'TALL', [0, 1], { container: 'cabinet' }), F('clock', 1, 1, 'TALL', [0, 1]), F('plant', 1, 1, 'LOW', [1, 3]), F('armchair', 2, 2, 'LOW', [1, 2]), F('chest', 2, 1, 'LOW', [0, 1], { container: 'chest' })],
+  ballroom: [F('piano', 4, 3, 'LOW', [1, 1]), F('armchair', 2, 2, 'LOW', [2, 4]), F('plant', 1, 1, 'LOW', [2, 4]), F('statue', 1, 1, 'TALL', [1, 3]), F('clock', 1, 1, 'TALL', [1, 1]), F('bench', 3, 1, 'LOW', [1, 3]), F('sideboard', 4, 1, 'LOW', [1, 1], { container: 'drawer' }), F('side_table', 1, 1, 'LOW', [1, 2], { container: 'drawer' }), F('china_cabinet', 3, 1, 'TALL', [0, 1], { container: 'cabinet' })],
+  conservatory: [F('plant', 1, 1, 'LOW', [5, 8]), F('armchair', 2, 2, 'LOW', [1, 3]), F('side_table', 1, 1, 'LOW', [1, 2], { container: 'drawer' }), F('bench', 3, 1, 'LOW', [1, 2]), F('statue', 1, 1, 'TALL', [0, 1]), F('coffee_table', 3, 2, 'LOW', [0, 1], { place: 'center' }), F('chest', 2, 1, 'LOW', [0, 1], { container: 'chest' })],
+  chapel: [F('altar', 3, 1, 'LOW', [1, 1]), F('pew', 4, 2, 'LOW', [1, 2], { place: 'center' }), F('bench', 3, 1, 'LOW', [1, 3]), F('statue', 1, 1, 'TALL', [1, 2]), F('chest', 2, 1, 'LOW', [0, 1], { container: 'chest' }), F('plant', 1, 1, 'LOW', [0, 1])],
+  servant: [F('bed', 3, 4, 'LOW', [1, 1]), F('wardrobe', 3, 1, 'TALL', [1, 1], { container: 'wardrobe' }), F('nightstand', 1, 1, 'LOW', [1, 1], { container: 'drawer' }), F('chest', 2, 1, 'LOW', [0, 1], { container: 'chest' }), F('washtub', 2, 1, 'LOW', [0, 1]), F('dresser', 3, 1, 'LOW', [0, 1], { container: 'drawer' })],
+  living: [F('fireplace', 4, 1, 'TALL', [1, 1]), F('bookshelf', 3, 1, 'TALL', [1, 2], { container: 'shelf' }), F('sofa', 4, 2, 'LOW', [1, 2]), F('armchair', 2, 2, 'LOW', [2, 3]), F('clock', 1, 1, 'TALL', [0, 1]), F('statue', 1, 1, 'TALL', [0, 1]), F('coffee_table', 3, 2, 'LOW', [1, 1], { place: 'center' }), F('cabinet', 2, 1, 'TALL', [0, 1], { container: 'wardrobe' }), F('side_table', 1, 1, 'LOW', [1, 1], { container: 'drawer' }), F('plant', 1, 1, 'LOW', [0, 1])],
   dining: [F('dining_table', 8, 4, 'LOW', [1, 1], { place: 'center' }), F('sideboard', 4, 1, 'LOW', [1, 1], { container: 'drawer' }), F('china_cabinet', 3, 1, 'TALL', [1, 1], { container: 'cabinet' }), F('plant', 1, 1, 'LOW', [0, 2]), F('clock', 1, 1, 'TALL', [0, 1])],
   kitchen: [F('counter', 3, 1, 'LOW', [2, 3], { container: 'cabinet' }), F('stove', 2, 1, 'LOW', [1, 1]), F('kshelf', 3, 1, 'TALL', [1, 1], { container: 'shelf' }), F('ktable', 4, 3, 'LOW', [1, 1], { place: 'center' }), F('barrel', 1, 1, 'LOW', [0, 1])],
   pantry: [F('pshelf', 3, 1, 'TALL', [2, 3], { container: 'shelf' }), F('crate', 2, 2, 'LOW', [1, 2], { container: 'crate' }), F('barrel', 1, 1, 'LOW', [1, 2]), F('sack', 1, 1, 'LOW', [1, 2])],
   study: [F('desk', 3, 2, 'LOW', [1, 1], { container: 'drawer' }), F('bookshelf', 3, 1, 'TALL', [2, 3], { container: 'shelf' }), F('cabinet', 2, 1, 'TALL', [0, 1], { container: 'wardrobe' }), F('chest', 2, 1, 'LOW', [0, 1], { container: 'chest' }), F('globe', 1, 1, 'LOW', [0, 1]), F('armchair', 2, 2, 'LOW', [0, 1])],
   bedroom: [F('bed', 3, 4, 'LOW', [1, 1]), F('wardrobe', 3, 1, 'TALL', [1, 1], { container: 'wardrobe' }), F('nightstand', 1, 1, 'LOW', [1, 2], { container: 'drawer' }), F('dresser', 3, 1, 'LOW', [0, 1], { container: 'drawer' }), F('chest', 2, 1, 'LOW', [0, 1], { container: 'chest' }), F('armchair', 2, 2, 'LOW', [0, 1])],
-  master: [F('bed_big', 4, 5, 'LOW', [1, 1]), F('wardrobe', 3, 1, 'TALL', [1, 2], { container: 'wardrobe' }), F('nightstand', 1, 1, 'LOW', [2, 2], { container: 'drawer' }), F('dresser', 3, 1, 'LOW', [1, 1], { container: 'drawer' }), F('chest', 2, 1, 'LOW', [0, 1], { container: 'chest' }), F('armchair', 2, 2, 'LOW', [0, 1])],
+  master: [F('bed_big', 4, 5, 'LOW', [1, 1]), F('wardrobe', 3, 1, 'TALL', [1, 2], { container: 'wardrobe' }), F('nightstand', 1, 1, 'LOW', [2, 2], { container: 'drawer' }), F('dresser', 3, 1, 'LOW', [1, 1], { container: 'drawer' }), F('chest', 2, 1, 'LOW', [0, 1], { container: 'chest' }), F('armchair', 2, 2, 'LOW', [1, 2]), F('plant', 1, 1, 'LOW', [0, 2])],
   bathroom: [F('bathtub', 4, 2, 'LOW', [1, 1]), F('sink', 2, 1, 'LOW', [1, 1], { container: 'cabinet' }), F('toilet', 1, 1, 'LOW', [1, 1]), F('bcabinet', 2, 1, 'TALL', [0, 1], { container: 'cabinet' })],
   music: [F('piano', 4, 3, 'LOW', [1, 1]), F('armchair', 2, 2, 'LOW', [1, 2]), F('bookshelf', 3, 1, 'TALL', [1, 1], { container: 'shelf' }), F('cabinet', 2, 1, 'TALL', [0, 1], { container: 'wardrobe' }), F('side_table', 1, 1, 'LOW', [0, 1], { container: 'drawer' })],
-  library: [F('bookshelf', 3, 1, 'TALL', [3, 5], { container: 'shelf' }), F('reading_table', 3, 2, 'LOW', [1, 1], { place: 'center', container: 'drawer' }), F('armchair', 2, 2, 'LOW', [1, 2]), F('globe', 1, 1, 'LOW', [0, 1])],
+  library: [F('bookshelf', 3, 1, 'TALL', [4, 7], { container: 'shelf' }), F('reading_table', 3, 2, 'LOW', [1, 1], { place: 'center', container: 'drawer' }), F('armchair', 2, 2, 'LOW', [1, 3]), F('globe', 1, 1, 'LOW', [0, 1]), F('desk', 3, 2, 'LOW', [0, 1], { container: 'drawer' }), F('statue', 1, 1, 'TALL', [0, 1])],
   nursery: [F('crib', 3, 2, 'LOW', [1, 1]), F('chest', 2, 1, 'LOW', [1, 1], { container: 'chest' }), F('rocking_horse', 1, 2, 'LOW', [0, 1]), F('wardrobe', 3, 1, 'TALL', [1, 1], { container: 'wardrobe' }), F('dresser', 3, 1, 'LOW', [0, 1], { container: 'drawer' })],
   linen: [F('wardrobe', 3, 1, 'TALL', [2, 3], { container: 'wardrobe' }), F('pshelf', 3, 1, 'TALL', [0, 1], { container: 'shelf' }), F('chest', 2, 1, 'LOW', [0, 1], { container: 'chest' })],
   storage: [F('crate', 2, 2, 'LOW', [2, 4], { container: 'crate' }), F('pshelf', 3, 1, 'TALL', [1, 2], { container: 'shelf' }), F('sheet', 2, 2, 'LOW', [1, 2]), F('chest', 2, 1, 'LOW', [0, 1], { container: 'chest' })],
@@ -60,7 +71,9 @@ const TEMPLATES = {
 export function drawerLayout(kind, wMeters) {
   if (kind === 'desk') return { rows: 3, cols: 2 };
   if (kind === 'reading_table') return { rows: 1, cols: 1 };
-  const rows = kind === 'dresser' ? 3 : kind === 'sideboard' ? 2 : 1;
+  // v3: cômoda = UMA gaveta grande em cima (a única que abre); as gavetinhas de baixo são só decoração
+  if (kind === 'dresser') return { rows: 1, cols: 1 };
+  const rows = kind === 'sideboard' ? 2 : 1;
   const cols = (wMeters - 0.08) > 1.2 ? 2 : 1;
   return { rows, cols };
 }
@@ -68,12 +81,12 @@ export function drawerLayout(kind, wMeters) {
 export const SURFACE_Y = { desk: 0.81, dining_table: 0.79, ktable: 0.81, reading_table: 0.79, coffee_table: 0.48, side_table: 0.69, nightstand: 0.61, console: 0.86, sideboard: 0.93, dresser: 1.01, counter: 0.91 };
 // Móveis obrigatórios por cômodo (o gerador garante e o validador confere)
 // v2 fase 2: altura máxima (m) do modelo 3D de cada móvel — conferida contra os modelos em test/overlap.test.js
-export const PROP_HEIGHT = {"winerack":1.9,"barrel_big":0.93,"crate":1.06,"boiler":3.3,"mshelf":2.15,"chest":0.77,"barrel":0.75,"washtub":1.04,"sack":0.52,"fireplace":1.65,"bookshelf":2.15,"sofa":1,"armchair":1.28,"coffee_table":0.51,"cabinet":2.15,"side_table":0.68,"desk":1.11,"globe":1.18,"bathtub":1.1,"sink":2.03,"toilet":1.89,"bcabinet":1.85,"console":1.1,"clock":2.16,"plant":1.21,"dining_table":1.19,"sideboard":1.17,"china_cabinet":2.3,"counter":1.08,"stove":2.7,"kshelf":2.15,"ktable":1.11,"pshelf":2.15,"bed":1.2,"wardrobe":2.3,"nightstand":0.6,"piano":1.6,"crib":0.97,"rocking_horse":0.92,"dresser":1.77,"reading_table":0.93,"bed_big":2.36,"sheet":1.4,"oldwardrobe":2.3,"rocking_chair":1.22,"mannequin":1.81,"bench":0.5};
+export const PROP_HEIGHT = {"winerack":1.9,"barrel_big":0.93,"crate":1.06,"boiler":3.3,"mshelf":2.15,"chest":0.77,"barrel":0.75,"washtub":1.04,"sack":0.52,"fireplace":1.65,"bookshelf":2.15,"sofa":1,"armchair":1.28,"coffee_table":0.51,"cabinet":2.19,"side_table":0.68,"desk":1.11,"globe":1.18,"bathtub":1.1,"sink":2.03,"toilet":1.89,"bcabinet":1.89,"console":1.1,"clock":2.16,"plant":1.21,"dining_table":1.19,"sideboard":1.17,"china_cabinet":2.34,"counter":1.08,"stove":2.7,"kshelf":2.15,"ktable":1.11,"pshelf":2.15,"bed":1.2,"wardrobe":2.34,"nightstand":0.6,"piano":1.6,"crib":0.97,"rocking_horse":0.92,"dresser":1.77,"reading_table":0.93,"bed_big":2.36,"sheet":1.4,"oldwardrobe":2.34,"rocking_chair":1.22,"mannequin":1.81,"bench":0.5,"statue":1.78,"pew":1.0,"altar":1.25};
 export const REQUIRED_FURNITURE = {
   bedroom: ['bed', 'wardrobe', 'nightstand'], master: ['bed_big', 'wardrobe', 'nightstand', 'dresser'], nursery: ['crib', 'wardrobe', 'chest'],
   kitchen: ['counter', 'stove', 'kshelf'], bathroom: ['bathtub', 'sink', 'toilet'], living: ['fireplace', 'sofa', 'bookshelf'],
   dining: ['dining_table', 'sideboard', 'china_cabinet'], study: ['desk', 'bookshelf'], library: ['bookshelf', 'reading_table'],
-  linen: ['wardrobe'], hall: ['cabinet', 'console'], music: ['piano'], pantry: ['pshelf'], cellar: ['winerack'], boiler: ['boiler'], attic: ['oldwardrobe'],
+  linen: ['wardrobe'], hall: ['cabinet', 'console'], ballroom: ['piano'], chapel: ['altar'], servant: ['bed', 'wardrobe'], conservatory: ['plant'], music: ['piano'], pantry: ['pshelf'], cellar: ['winerack'], boiler: ['boiler'], attic: ['oldwardrobe'],
 };
 
 const KNOCK_KINDS = ['vase', 'vase', 'bottles', 'candelabrum', 'bucket', 'box', 'box'];
@@ -91,26 +104,6 @@ function mkLevel() {
 }
 
 // ---------------- geração ----------------
-function chooseStairs(rng) {
-  const labels = ['B', 'U1', 'U2', 'A'];
-  for (let tries = 0; tries < 400; tries++) {
-    const xs = labels.map(() => rng.int(1, W - 2 - (STAIR_SLOT - 1)));
-    const order = labels.map((l, i) => ({ l, x: xs[i] })).sort((a, b) => a.x - b.x);
-    let ok = true;
-    for (let i = 1; i < order.length; i++) {
-      const g = order[i].x - order[i - 1].x;
-      if (!(g === STAIR_SLOT + 1 || g >= STAIR_SLOT + 10)) { ok = false; break; }
-    }
-    if (!ok) continue;
-    const pos = Object.fromEntries(order.map(o => [o.l, o.x]));
-    if (Math.abs(pos.U1 - pos.U2) < 24) continue;
-    if (!runsFor([{ x: pos.B }, { x: pos.U1 }, { x: pos.U2 }], 1, W - 2)) continue;
-    if (!runsFor([{ x: pos.U1 }, { x: pos.U2 }, { x: pos.A }], 1, W - 2)) continue;
-    return pos;
-  }
-  return null;
-}
-
 // Checa se as faixas livres entre slots fixos de um andar têm largura 0 ou >= 8
 function runsFor(slots, fx0, fx1) {
   const s = slots.slice().sort((a, b) => a.x - b.x);
@@ -155,10 +148,11 @@ function splitRun(rng, a, b) {
 }
 
 class Gen {
-  constructor(seed, attempt) {
-    this.rng = makeRng(hashString(seed + '|' + GEN_VERSION + '|' + attempt));
+  constructor(seed, attempt, size = 3) {
+    this.size = size;
+    this.rng = makeRng(hashString(seed + '|' + GEN_VERSION + '|' + attempt + (size === 3 ? '' : '|s' + size)));
     this.map = {
-      seed: String(seed), version: GEN_VERSION, attempt,
+      seed: String(seed), version: GEN_VERSION, attempt, size,
       levels: [mkLevel(), mkLevel(), mkLevel(), mkLevel()],
       rooms: [], doors: [], stairs: [], props: [], containers: [], knockables: [],
       lamps: [], windows: [], decor: [], spawns: [], creatureSpawn: null, exit: null,
@@ -171,6 +165,8 @@ class Gen {
   addRoom(L, type, x0, z0, x1, z1, extra = {}) {
     const info = ROOM_INFO[type];
     const r = { id: this.map.rooms.length, level: L, type, name: info.name, floor: info.floor, wall: info.wall, x0, z0, x1, z1, ...extra };
+    if (info.look) r.look = info.look;
+    if (type === 'stairs' && extra.grand) { r.wall = 'red'; r.name = 'Escadaria principal'; }
     if (L === 0 && type !== 'stairs') { r.floor = 'stone'; r.wall = 'stone'; }
     if (L === 0 && type === 'stairs') { r.floor = 'stone'; r.wall = 'stone'; }
     if (L === 3) { r.floor = 'wood'; r.wall = 'attic'; }
@@ -206,212 +202,344 @@ class Gen {
     }
   }
 
+  // ======================= v3 (jam): planta da mansão =======================
+  // Térreo e 2º andar: HALL central (do portão ao fundo, com a escadaria principal no meio), duas ALAS de cômodos
+  // em três faixas (frente / meio / fundo) ligados entre si (enfilade) e ao hall por várias portas — quase sem
+  // corredores e sempre com mais de uma saída por cômodo. A ala "de serviço" recebe a escada dos empregados e a do
+  // porão (cozinha, despensa, sala de jantar ao lado). No 2º andar o hall vira a GALERIA (anel em volta do vão da
+  // escadaria). Porão e sótão continuam com o corredor de serviço (bandas).
   build() {
-    const rng = this.rng, m = this.map;
-    const st = chooseStairs(rng);
+    const rng = this.rng, m = this.map, size = this.size;
+    const [wmin, wmax] = MANSION_SIZES[size] || MANSION_SIZES[3];
+    const fw = rng.int(wmin, Math.min(wmax, W - 2));
+    const fx0 = 1 + rng.int(0, W - 2 - fw), fx1 = fx0 + fw - 1;
+    const hw = size === 1 ? rng.int(14, 16) : rng.int(16, 20);
+    const hx0 = Math.round((fx0 + fx1 + 1) / 2 - hw / 2) + rng.int(-3, 3), hx1 = hx0 + hw - 1;
+    const wings = { W: [fx0, hx0 - 2], E: [hx1 + 2, fx1] };
+    if (wings.W[1] - wings.W[0] + 1 < 16 || wings.E[1] - wings.E[0] + 1 < 16) return null;
+    const service = rng.pick(['W', 'E']), recep = service === 'W' ? 'E' : 'W';
+    // escadas de serviço (porão B, empregados U2, sótão A) no fundo das alas
+    let st = null;
+    for (let t = 0; t < 800 && !st; t++) {
+      const wB = rng.chance(0.65) ? service : recep, wU = rng.chance(0.85) ? service : recep, wA = rng.chance(0.5) ? service : recep;
+      const px = (wk) => rng.int(wings[wk][0], wings[wk][1] - (STAIR_SLOT - 1));
+      const c = { B: { w: wB, x: px(wB) }, U2: { w: wU, x: px(wU) }, A: { w: wA, x: px(wA) } };
+      let ok = true;
+      for (const [, keys] of [[1, ['B', 'U2']], [2, ['U2', 'A']]]) for (const wk of ['W', 'E']) {
+        const xs = keys.filter(k => c[k].w === wk).map(k => ({ x: c[k].x }));
+        if (!runsFor(xs, wings[wk][0], wings[wk][1])) ok = false;
+      }
+      if (ok) st = c;
+    }
     if (!st) return null;
-    this.stairPos = st;
-    // pegadas (footprints) de cada andar
-    const fp = [null, [1, W - 2], [1, W - 2], null];
-    for (let t = 0; t < 60 && !fp[0]; t++) {
-      const w = rng.int(40, 50); let x0 = st.B - rng.int(4, w - STAIR_SLOT - 4);
-      x0 = Math.max(1, Math.min(W - 2 - w + 1, x0));
-      const f = [x0, x0 + w - 1];
-      if (runsFor([{ x: st.B }], f[0], f[1])) fp[0] = f;
-    }
-    for (let t = 0; t < 60 && !fp[3]; t++) {
-      const w = rng.int(36, 46); let x0 = st.A - rng.int(4, w - STAIR_SLOT - 4);
-      x0 = Math.max(1, Math.min(W - 2 - w + 1, x0));
-      const f = [x0, x0 + w - 1];
-      if (runsFor([{ x: st.A }], f[0], f[1])) fp[3] = f;
-    }
+    this.stairPos = { B: st.B.x, U2: st.U2.x, A: st.A.x };
+    // pegadas do porão e do sótão (dentro da pegada da casa)
+    const fp = [null, [fx0, fx1], [fx0, fx1], null];
+    const around = (x, wlo, whi) => {
+      for (let t = 0; t < 60; t++) {
+        const w = rng.int(Math.min(wlo, fw), Math.min(whi, fw)); let x0 = x - rng.int(4, w - STAIR_SLOT - 4);
+        x0 = Math.max(fx0, Math.min(fx1 - w + 1, x0));
+        const f = [x0, x0 + w - 1];
+        if (runsFor([{ x }], f[0], f[1])) return f;
+      }
+      return null;
+    };
+    fp[0] = around(st.B.x, 40, 50); fp[3] = around(st.A.x, 36, 46);
     if (!fp[0] || !fp[3]) return null;
-    // slots fixos de escada por andar
+    // objetos de escada (ordem: B, U1, U2, A)
+    const so = {};
+    const mk = (k, lower, upper) => {
+      const x = st[k].x, left = rng.chance(0.5), sx0 = left ? x : x + 4;
+      const s = { id: m.stairs.length, key: k, lower, upper, x0: sx0, w: STAIR_W, zTop: ROWS.northA, zBot: ROWS.northA + STAIR_LEN - 1, dir: -1, slotX: x, stringer: x + 3, walk0: left ? x + 4 : x };
+      m.stairs.push(s); return s;
+    };
+    so.B = mk('B', 0, 1);
+    const gx0 = Math.floor((hx0 + hx1 + 1) / 2) - GRAND_STAIR_W / 2;
+    // escadaria principal: sobe para o NORTE (dir +1): pé na linha 33 (vinda do hall), topo na linha 44 (patamar do 2º andar)
+    so.U1 = { id: m.stairs.length, key: 'U1', lower: 1, upper: 2, x0: gx0, w: GRAND_STAIR_W, zBot: ROWS.northA, zTop: ROWS.northA + STAIR_LEN - 1, dir: 1, grand: true, stringers: [gx0 - 1, gx0 + GRAND_STAIR_W] };
+    m.stairs.push(so.U1);
+    so.U2 = mk('U2', 1, 2); so.A = mk('A', 2, 3);
+    this.stairObj = so;
     const slots = [
-      [{ x: st.B, s: 'B', side: 'lower' }],
-      [{ x: st.B, s: 'B', side: 'upper' }, { x: st.U1, s: 'U1', side: 'lower' }, { x: st.U2, s: 'U2', side: 'lower' }],
-      [{ x: st.U1, s: 'U1', side: 'upper' }, { x: st.U2, s: 'U2', side: 'upper' }, { x: st.A, s: 'A', side: 'lower' }],
-      [{ x: st.A, s: 'A', side: 'upper' }],
+      [{ x: st.B.x, s: 'B', side: 'lower' }],
+      [{ x: st.B.x, s: 'B', side: 'upper', w: st.B.w }, { x: st.U2.x, s: 'U2', side: 'lower', w: st.U2.w }],
+      [{ x: st.U2.x, s: 'U2', side: 'upper', w: st.U2.w }, { x: st.A.x, s: 'A', side: 'lower', w: st.A.w }],
+      [{ x: st.A.x, s: 'A', side: 'upper' }],
     ];
-    const northRuns = [];
+    const plan = { fx0, fx1, hx0, hx1, wings, service, recep, ballroom: size >= 2 && rng.chance(0.45) };
     for (let L = 0; L < 4; L++) {
-      const r = runsFor(slots[L], fp[L][0], fp[L][1]);
-      if (!r) return null;
-      northRuns.push(r);
+      if (L === 0 || L === 3) { const r = runsFor(slots[L], fp[L][0], fp[L][1]); if (!r || !this.buildBandLevel(L, fp[L], slots[L], r)) return null; }
+      else if (!this.buildFloor(L, plan, slots[L])) return null;
     }
-    // escadas (lado da passagem escolhido por semente)
-    const stairDefs = { B: [0, 1], U1: [1, 2], U2: [1, 2], A: [2, 3] };
-    const stairObj = {};
-    for (const k of ['B', 'U1', 'U2', 'A']) {
-      const x = st[k];
-      const left = rng.chance(0.5);
-      const sx0 = left ? x : x + 4; // colunas da rampa
-      const s = { id: m.stairs.length, key: k, lower: stairDefs[k][0], upper: stairDefs[k][1], x0: sx0, w: STAIR_W, zTop: ROWS.northA, zBot: ROWS.northA + STAIR_LEN - 1, slotX: x, stringer: x + 3, walk0: left ? x + 4 : x };
-      m.stairs.push(s); stairObj[k] = s;
+    return true;
+  }
+
+  // escada de serviço num "slot" do fundo (código da v2): lado de baixo = passagem + rampa; lado de cima = vão
+  buildSlot(L, sl, xa, xb) {
+    const lv = this.map.levels[L], s = this.stairObj[sl.s];
+    if (sl.x - 1 >= xa) this.rect(L, sl.x - 1, ROWS.northA, sl.x - 1, ROWS.northB, T.WALL);
+    if (sl.x + STAIR_SLOT <= xb) this.rect(L, sl.x + STAIR_SLOT, ROWS.northA, sl.x + STAIR_SLOT, ROWS.northB, T.WALL);
+    if (sl.side === 'lower') {
+      this.rect(L, sl.x, ROWS.northA, sl.x + STAIR_SLOT - 1, ROWS.northB, T.FLOOR);
+      this.rect(L, s.stringer, s.zTop, s.stringer, s.zBot, T.WALL);
+      for (let z = s.zTop; z <= s.zBot; z++) for (let x = s.x0; x < s.x0 + STAIR_W; x++) { this.set(L, x, z, T.STAIR); lv.stair[ix(x, z)] = s.id; }
+      const r = this.addRoom(L, 'stairs', sl.x, ROWS.northA, sl.x + STAIR_SLOT - 1, ROWS.northB, { stair: s.id });
+      const arch = [[s.walk0, ROWS.wallN], [s.walk0 + 1, ROWS.wallN], [s.walk0 + 2, ROWS.wallN]];
+      this.addDoor(L, arch, 'z', { arch: true });
+      this.reserveAround(L, arch, 3, 'z');
+      for (let z = ROWS.northA; z <= ROWS.northB; z++) for (let x = sl.x; x < sl.x + STAIR_SLOT; x++) this.reserved[L][ix(x, z)] = 1;
+      r.archCells = arch;
+      return s.walk0;
     }
-    this.stairObj = stairObj;
+    this.rect(L, sl.x, ROWS.northA, sl.x + STAIR_SLOT - 1, ROWS.northB, T.HOLE);
+    for (let z = s.zTop; z <= s.zBot; z++) for (let x = s.x0; x < s.x0 + STAIR_W; x++) { this.set(L, x, z, T.STAIR); lv.stair[ix(x, z)] = s.id; }
+    const r = this.addRoom(L, 'stairs', s.x0, s.zTop, s.x0 + STAIR_W - 1, s.zBot, { stair: s.id, top: true });
+    const arch = [[s.x0, ROWS.wallN], [s.x0 + 1, ROWS.wallN], [s.x0 + 2, ROWS.wallN]];
+    this.addDoor(L, arch, 'z', { arch: true });
+    this.reserveAround(L, arch, 3, 'z');
+    r.archCells = arch;
+    return s.x0;
+  }
 
-    const southPlans = {
-      1: () => {
-        const others = ['living', 'diningKitchen', 'studyBath'];
-        rng.shuffle(others);
-        const seq = others.slice();
-        seq.splice(rng.int(1, 2), 0, 'hall');
-        // expande dining+kitchen (adjacentes)
-        const out = [];
-        for (const s of seq) {
-          if (s === 'diningKitchen') { if (rng.chance(0.5)) out.push('dining', 'kitchen|pantry'); else out.push('kitchen|pantry', 'dining'); }
-          else if (s === 'studyBath') out.push(rng.chance(0.5) ? 'study|bathroom' : 'bathroom|study');
-          else out.push(s);
+  // ---------- térreo / 2º andar ----------
+  buildFloor(L, P, slotsL) {
+    const rng = this.rng, m = this.map, lv = m.levels[L];
+    const { fx0, fx1, hx0, hx1, wings } = P;
+    lv.fx0 = fx0; lv.fx1 = fx1;
+    this.rect(L, fx0 - 1, 0, fx1 + 1, D - 1, T.WALL);
+    this.rect(L, fx0, 1, fx1, D - 2, T.FLOOR);
+    this.rect(L, hx0 - 1, 1, hx0 - 1, D - 2, T.WALL);
+    this.rect(L, hx1 + 1, 1, hx1 + 1, D - 2, T.WALL);
+    // escadaria principal dentro do hall (paredes laterais = guarda-corpo cheio); a ponta de cima é fechada no
+    // térreo e a de baixo no 2º andar (ninguém "cai" na rampa pelo lado errado)
+    const g = this.stairObj.U1, gx0 = g.x0, gx1 = g.x0 + g.w - 1;
+    this.rect(L, gx0 - 1, g.zBot, gx0 - 1, g.zTop, T.WALL); this.rect(L, gx1 + 1, g.zBot, gx1 + 1, g.zTop, T.WALL);
+    if (L === 1) this.rect(L, gx0 - 1, g.zTop + 1, gx1 + 1, g.zTop + 1, T.WALL);
+    else this.rect(L, gx0 - 1, g.zBot - 1, gx1 + 1, g.zBot - 1, T.WALL);
+    for (let z = g.zBot; z <= g.zTop; z++) for (let x = gx0; x <= gx1; x++) { this.set(L, x, z, T.STAIR); lv.stair[ix(x, z)] = g.id; }
+    const center = this.addRoom(L, L === 1 ? 'hall' : 'gallery', hx0, 1, hx1, D - 2);
+    this.addRoom(L, 'stairs', gx0, g.zBot, gx1, g.zTop, { stair: g.id, top: L === 2, grand: true });
+    if (L === 1) { for (let z = g.zBot - 5; z < g.zBot; z++) for (let x = gx0 - 1; x <= gx1 + 1; x++) this.reserved[L][ix(x, z)] = 1; }
+    else { for (let z = g.zTop + 1; z <= D - 2; z++) for (let x = gx0 - 1; x <= gx1 + 1; x++) this.reserved[L][ix(x, z)] = 1; }
+    // ---- alas ----
+    const rects = { W: null, E: null };
+    for (const wk of ['W', 'E']) {
+      const [a, b] = wings[wk];
+      const wslots = slotsL.filter(s => s.w === wk);
+      const backRuns = runsFor(wslots.map(s => ({ x: s.x })), a, b) || [];
+      const merged = L === 1 && wk === P.recep && P.ballroom && backRuns.length > 0;
+      const za = rng.int(14, 17);
+      if (!merged) this.rect(L, a, za, b, za, T.WALL);
+      this.rect(L, a, ROWS.wallN, b, ROWS.wallN, T.WALL);
+      // colunas que não podem virar parede na faixa do meio (arcos das escadas de serviço chegam ali)
+      const archCols = [];
+      for (const sl of wslots) { const s = this.stairObj[sl.s]; const c0 = sl.side === 'lower' ? s.walk0 : s.x0; for (let k = -1; k <= 3; k++) archCols.push(c0 + k); }
+      const split = (x0, x1, minW, avoid = []) => {
+        const w = x1 - x0 + 1;
+        if (w >= 2 * minW + 1 && rng.chance(w >= 26 ? 0.8 : 0.5)) {
+          for (let t = 0; t < 12; t++) { const s = x0 + rng.int(minW, w - minW - 1); if (!avoid.includes(s)) return [[x0, s - 1], [s + 1, x1]]; }
         }
-        return out;
-      },
-      2: () => rng.shuffle(['master|bathroom', 'bedroom', 'library', rng.chance(0.5) ? 'nursery' : 'bedroom', 'bathroom|bedroom']),
-      0: () => rng.shuffle(['cellar', 'boiler', 'bstorage']),
-      3: () => rng.shuffle(['attic', 'attic', 'attic']),
-    };
-    const northQueues = {
-      0: ['laundry', 'bstorage', 'cellar'],
-      1: rng.shuffle(['bedroom', 'bathroom', 'music', 'storage', 'study']),
-      2: rng.shuffle(['bedroom', 'bathroom', 'linen', 'storage', 'bedroom']),
-      3: ['attic', 'attic', 'attic'],
-    };
-    const PREF = { hall: [14, 18], living: [14, 18], dining: [12, 16], 'kitchen|pantry': [12, 15], 'study|bathroom': [12, 16], 'bathroom|study': [12, 16], 'master|bathroom': [14, 18], bedroom: [10, 14], library: [12, 16], nursery: [10, 13], 'bathroom|bedroom': [10, 13], cellar: [10, 16], boiler: [10, 14], bstorage: [10, 16], attic: [10, 14] };
+        return [[x0, x1]];
+      };
+      const tier = (xs, z0, z1) => xs.map(([x0, x1], i) => { if (i > 0) this.rect(L, x0 - 1, z0, x0 - 1, z1, T.WALL); return { x0, x1, z0, z1 }; });
+      const R = { front: [], middle: [], back: [], merged };
+      if (merged) R.front = tier([[a, b]], 1, ROWS.wallN - 1);
+      else { R.front = tier(split(a, b, 10), 1, za - 1); R.middle = tier(split(a, b, 10, archCols), za + 1, ROWS.wallN - 1); }
+      for (const [r0, r1] of backRuns) R.back.push(...tier(split(r0, r1, 9), ROWS.northA, ROWS.northB));
+      for (const sl of wslots) this.buildSlot(L, sl, a, b);
+      rects[wk] = R;
+    }
+    // ---- tipos de cômodo (arquitetura: serviço junto da cozinha/escadas; social na outra ala; quartos em cima) ----
+    const area = (r) => (r.x1 - r.x0 + 1) * (r.z1 - r.z0 + 1);
+    const big = (arr) => arr.slice().sort((p, q) => area(q) - area(p));
+    const assign = (arr, types) => big(arr).forEach((r, i) => { r.type = types[Math.min(i, types.length - 1)]; });
+    const pool = (arr, list) => { const l = rng.shuffle(list.slice()); big(arr).forEach((r, i) => { r.type = l[i % l.length]; }); };
+    const S = rects[P.service], Rc = rects[P.recep];
+    if (L === 1) {
+      assign(S.front, ['dining', rng.pick(['study', 'bathroom'])]);
+      assign(S.middle, ['kitchen', 'pantry']);
+      const hasPantry = S.middle.length > 1;
+      pool(S.back, hasPantry ? ['servant', 'storage', 'bathroom'] : ['pantry']);
+      if (!hasPantry && S.back.length > 1) big(S.back).slice(1).forEach((r, i) => { r.type = ['servant', 'storage', 'bathroom'][i % 3]; });
+      if (Rc.merged) {
+        Rc.front[0].type = 'ballroom';
+        assign(Rc.back, ['living', rng.pick(['music', 'conservatory']), rng.pick(['study', 'chapel', 'bathroom'])]);
+      } else {
+        assign(Rc.front, ['living', rng.pick(['study', 'music'])]);
+        assign(Rc.middle, ['library', rng.pick(['music', 'study', 'bathroom'])]);
+        pool(Rc.back, ['conservatory', 'chapel', 'music', 'study', 'bathroom']);
+      }
+    } else {
+      assign(S.front, ['bedroom', 'nursery']);
+      assign(S.middle, ['bedroom', 'bathroom']);
+      pool(S.back, ['servant', 'linen', 'storage', 'bathroom']);
+      assign(Rc.front, ['master', 'bathroom']);
+      assign(Rc.middle, [rng.pick(['bedroom', 'study']), rng.pick(['nursery', 'bedroom', 'linen'])]);
+      pool(Rc.back, ['linen', 'bedroom', 'study', 'bathroom']);
+    }
+    const levelRooms = [center];
+    for (const wk of ['W', 'E']) for (const key of ['front', 'middle', 'back']) for (const r of rects[wk][key]) {
+      const room = this.addRoom(L, r.type, r.x0, r.z0, r.x1, r.z1, { wing: wk, tier: key });
+      levelRooms.push(room);
+    }
+    // ---- portas: hall ↔ cômodos, enfilade entre vizinhos, ligações entre faixas ----
+    const links = new Map(levelRooms.map(r => [r.id, new Set()]));
+    const link = (a, b, opts) => { if (links.get(a.id).has(b.id)) return true; const ok = this.connect(L, a, b, opts); if (ok) { links.get(a.id).add(b.id); links.get(b.id).add(a.id); } return !!ok; };
+    const grandTypes = ['living', 'dining', 'ballroom', 'library', 'master', 'bedroom'];
+    for (const r of levelRooms) if (r !== center) {
+      if (r.x1 + 2 === center.x0 || center.x1 + 2 === r.x0) {
+        const arch = (L === 1 && grandTypes.includes(r.type) && rng.chance(0.45));
+        link(center, r, arch ? { arch: true, width: 4 } : {});
+      }
+    }
+    const wingRooms = levelRooms.filter(r => r !== center);
+    for (let i = 0; i < wingRooms.length; i++) for (let j = i + 1; j < wingRooms.length; j++) {
+      const a = wingRooms[i], b = wingRooms[j];
+      if (a.wing !== b.wing) continue;
+      const p = a.tier === b.tier ? 1 : 0.7;
+      if (rng.chance(p)) link(a, b, (a.tier === b.tier && rng.chance(0.25)) ? { arch: true, width: 3 } : {});
+    }
+    // rotas de fuga: todo cômodo com pelo menos 2 saídas sempre que houver vizinho possível
+    for (const r of wingRooms) {
+      let deg = links.get(r.id).size + (this.slotArchesInto(L, r) ? 1 : 0);
+      if (deg >= 2) continue;
+      for (const q of rng.shuffle(levelRooms.slice())) { if (q === r || links.get(r.id).has(q.id)) continue; if (link(r, q, {})) { deg++; if (deg >= 2) break; } }
+    }
+    // conectividade garantida a partir do hall
+    for (let pass = 0; pass < 3; pass++) {
+      const seen = new Set([center.id]); const q = [center.id];
+      while (q.length) { const id = q.pop(); for (const n of links.get(id)) if (!seen.has(n)) { seen.add(n); q.push(n); } }
+      const lost = wingRooms.filter(r => !seen.has(r.id));
+      if (!lost.length) break;
+      for (const r of lost) for (const o of levelRooms) if (seen.has(o.id) && link(r, o, {})) break;
+    }
+    // ---- saída e pontos de aparecimento (térreo) ----
+    if (L === 1) {
+      const ex = Math.floor((hx0 + hx1) / 2) - 1;
+      const cells = [[ex, 0], [ex + 1, 0], [ex + 2, 0]];
+      for (const [x, z] of cells) this.set(L, x, z, T.EXIT);
+      m.exit = { level: 1, cells, x: (ex + 1.5) * CELL, z: 0.5 * CELL, room: center.id };
+      this.reserveAround(L, cells, 4, 'z');
+      const hx = (hx0 + hx1 + 1) / 2 * CELL;
+      const pts = [[-1.0, 0], [1.0, 0], [-1.0, 1.4], [1.0, 1.4]];
+      for (const [ox, oz] of pts) m.spawns.push({ level: 1, x: hx + ox, z: 4.2 + oz, yaw: Math.PI });
+      for (const s of m.spawns) this.reserved[1][ix(Math.floor(s.x / CELL), Math.floor(s.z / CELL))] = 1;
+      for (let z = 7; z <= 12; z++) for (let x = Math.floor(hx / CELL) - 3; x <= Math.floor(hx / CELL) + 2; x++) this.reserved[1][ix(x, z)] = 1;
+    }
+    return true;
+  }
+  // arco de escada de serviço que desemboca neste cômodo (conta como saída)
+  slotArchesInto(L, r) {
+    for (const rr of this.map.rooms) if (rr.level === L && rr.type === 'stairs' && rr.archCells) for (const [x, z] of rr.archCells) if (z === ROWS.wallN && r.z1 === ROWS.wallN - 1 && x >= r.x0 && x <= r.x1) return true;
+    return false;
+  }
+  // porta (ou arco) na parede comum de dois cômodos vizinhos
+  connect(L, a, b, opts = {}) {
+    if (a.x1 + 2 === b.x0 || b.x1 + 2 === a.x0) {
+      const line = a.x1 + 2 === b.x0 ? a.x1 + 1 : b.x1 + 1, lo = Math.max(a.z0, b.z0), hi = Math.min(a.z1, b.z1);
+      if (hi - lo + 1 >= (opts.width || 3) + 2) return this.doorOnWall(L, 'x', line, lo, hi, opts);
+    }
+    if (a.z1 + 2 === b.z0 || b.z1 + 2 === a.z0) {
+      const line = a.z1 + 2 === b.z0 ? a.z1 + 1 : b.z1 + 1, lo = Math.max(a.x0, b.x0), hi = Math.min(a.x1, b.x1);
+      if (hi - lo + 1 >= (opts.width || 3) + 2) return this.doorOnWall(L, 'z', line, lo, hi, opts);
+    }
+    return null;
+  }
+  doorOnWall(L, axis, line, lo, hi, opts = {}) {
+    const n = opts.width || 3, lv = this.map.levels[L];
+    const cands = []; for (let p = lo + 1; p + n - 1 <= hi - 1; p++) cands.push(p);
+    // preferência pelo meio da parede (portas centradas, como numa casa de verdade), com variação
+    const mid = (lo + hi - n + 1) / 2;
+    // v3: sorteio feito ANTES de ordenar (uma vez por candidato, em ordem fixa). Antes o rng era chamado dentro do
+    // comparador do sort — o resultado dependia do algoritmo de ordenação do motor JS (V8 × Firefox × Safari),
+    // e o cliente podia gerar uma mansão diferente da do servidor (hash diferente).
+    const keyed = cands.map(p => ({ p, k: Math.abs(p - mid) + this.rng.next() * 6 }));
+    keyed.sort((a, b) => (a.k - b.k) || (a.p - b.p));
+    for (const { p } of keyed) {
+      const cells = []; let ok = true;
+      for (let k = 0; k < n && ok; k++) {
+        const [x, z] = axis === 'x' ? [line, p + k] : [p + k, line];
+        cells.push([x, z]);
+        if (this.get(L, x, z) !== T.WALL) { ok = false; break; }
+        const sides = axis === 'x' ? [[x - 1, z], [x + 1, z]] : [[x, z - 1], [x, z + 1]];
+        for (const [sx, sz] of sides) if (this.get(L, sx, sz) !== T.FLOOR || lv.room[ix(sx, sz)] < 0 || this.reserved[L][ix(sx, sz)] === 2) ok = false;
+      }
+      if (!ok) continue;
+      const before = axis === 'x' ? [line, p - 1] : [p - 1, line], after = axis === 'x' ? [line, p + n] : [p + n, line];
+      if (this.get(L, before[0], before[1]) !== T.WALL || this.get(L, after[0], after[1]) !== T.WALL) continue;
+      if (opts.arch) { this.addDoor(L, cells, axis, { arch: true }); this.reserveAround(L, cells, 3, axis); }
+      else this.addDoor(L, cells, axis, {});
+      return cells;
+    }
+    return null;
+  }
 
-    for (let L = 0; L < 4; L++) {
-      const [fx0, fx1] = fp[L];
-      const lv = m.levels[L]; lv.fx0 = fx0; lv.fx1 = fx1;
-      this.rect(L, fx0 - 1, 0, fx1 + 1, D - 1, T.WALL);
-      this.rect(L, fx0, 1, fx1, D - 2, T.FLOOR);
-      this.rect(L, fx0, ROWS.wallS, fx1, ROWS.wallS, T.WALL);
-      this.rect(L, fx0, ROWS.wallN, fx1, ROWS.wallN, T.WALL);
-      const corr = this.addRoom(L, 'corridor', fx0, ROWS.corrA, fx1, ROWS.corrB);
-      // ---- faixa sul ----
-      const plan = southPlans[L]();
-      const ws = splitWidths(rng, fx1 - fx0 + 1, plan.map(p => PREF[p] || [10, 14]));
-      if (!ws) return null;
-      let c = fx0;
-      const southRooms = [];
-      plan.forEach((p, i) => {
-        const x0 = c, x1 = c + ws[i] - 1;
-        if (i < plan.length - 1) this.rect(L, x1 + 1, ROWS.southA, x1 + 1, ROWS.southB, T.WALL);
-        c = x1 + 2;
-        if (p.includes('|')) {
-          const [back, front] = p.split('|');
-          const zs = rng.int(11, 15);
-          this.rect(L, x0, zs, x1, zs, T.WALL);
-          const rb = this.addRoom(L, back, x0, zs + 1, x1, ROWS.southB);
-          const rf = this.addRoom(L, front, x0, ROWS.southA, x1, zs - 1);
-          southRooms.push(rb, rf);
-          // porta entre frente e fundo
-          const dx = rng.int(x0 + 1, x1 - 3);
-          this.addDoor(L, [[dx, zs], [dx + 1, zs], [dx + 2, zs]], 'z');
-          rb.split = rf.id;
-        } else {
-          southRooms.push(this.addRoom(L, p, x0, ROWS.southA, x1, ROWS.southB));
-        }
+  // ---------- porão / sótão: corredor de serviço com cômodos dos dois lados (planta da v2) ----------
+  buildBandLevel(L, fpL, slotsL, northRunsL) {
+    const rng = this.rng, m = this.map, stairObj = this.stairObj;
+    const southPlans = { 0: () => rng.shuffle(['cellar', 'boiler', 'bstorage']), 3: () => rng.shuffle(['attic', 'attic', 'attic']) };
+    const northQueues = { 0: ['laundry', 'bstorage', 'cellar'], 3: ['attic', 'attic', 'attic'] };
+    const PREF = { cellar: [10, 16], boiler: [10, 14], bstorage: [10, 16], attic: [10, 14] };
+    const [fx0, fx1] = fpL;
+    const lv = m.levels[L]; lv.fx0 = fx0; lv.fx1 = fx1;
+    this.rect(L, fx0 - 1, 0, fx1 + 1, D - 1, T.WALL);
+    this.rect(L, fx0, 1, fx1, D - 2, T.FLOOR);
+    this.rect(L, fx0, ROWS.wallS, fx1, ROWS.wallS, T.WALL);
+    this.rect(L, fx0, ROWS.wallN, fx1, ROWS.wallN, T.WALL);
+    this.addRoom(L, 'corridor', fx0, ROWS.corrA, fx1, ROWS.corrB);
+    const plan = southPlans[L]();
+    const ws = splitWidths(rng, fx1 - fx0 + 1, plan.map(p => PREF[p] || [10, 14]));
+    if (!ws) return null;
+    let c = fx0;
+    const southRooms = [];
+    plan.forEach((p, i) => {
+      const x0 = c, x1 = c + ws[i] - 1;
+      if (i < plan.length - 1) this.rect(L, x1 + 1, ROWS.southA, x1 + 1, ROWS.southB, T.WALL);
+      c = x1 + 2;
+      southRooms.push(this.addRoom(L, p, x0, ROWS.southA, x1, ROWS.southB));
+    });
+    const q = northQueues[L].slice();
+    const northRooms = [];
+    for (const [a, b] of northRunsL) {
+      const parts = splitRun(rng, a, b);
+      parts.forEach(([x0, x1], i) => {
+        if (i < parts.length - 1) this.rect(L, x1 + 1, ROWS.northA, x1 + 1, ROWS.northB, T.WALL);
+        const type = q.length ? q.shift() : (L === 3 ? 'attic' : 'bstorage');
+        northRooms.push(this.addRoom(L, type, x0, ROWS.northA, x1, ROWS.northB));
       });
-      // ---- faixa norte ----
-      const q = northQueues[L].slice();
-      const northRooms = [];
-      for (const [a, b] of northRuns[L]) {
-        const parts = splitRun(rng, a, b);
-        parts.forEach(([x0, x1], i) => {
-          if (i < parts.length - 1) this.rect(L, x1 + 1, ROWS.northA, x1 + 1, ROWS.northB, T.WALL);
-          const type = q.length ? q.shift() : (L === 3 ? 'attic' : L === 0 ? 'bstorage' : 'storage');
-          northRooms.push(this.addRoom(L, type, x0, ROWS.northA, x1, ROWS.northB));
-        });
-      }
-      // ---- slots de escada ----
-      for (const sl of slots[L]) {
-        const s = stairObj[sl.s];
-        // paredes do slot
-        if (sl.x - 1 >= fx0) this.rect(L, sl.x - 1, ROWS.northA, sl.x - 1, ROWS.northB, T.WALL);
-        if (sl.x + STAIR_SLOT <= fx1) this.rect(L, sl.x + STAIR_SLOT, ROWS.northA, sl.x + STAIR_SLOT, ROWS.northB, T.WALL);
-        if (sl.side === 'lower') {
-          this.rect(L, sl.x, ROWS.northA, sl.x + STAIR_SLOT - 1, ROWS.northB, T.FLOOR);
-          this.rect(L, s.stringer, s.zTop, s.stringer, s.zBot, T.WALL);
-          for (let z = s.zTop; z <= s.zBot; z++) for (let x = s.x0; x < s.x0 + STAIR_W; x++) { this.set(L, x, z, T.STAIR); lv.stair[ix(x, z)] = s.id; }
-          const r = this.addRoom(L, 'stairs', sl.x, ROWS.northA, sl.x + STAIR_SLOT - 1, ROWS.northB, { stair: s.id });
-          // arco do corredor para a passagem
-          const arch = [[s.walk0, ROWS.wallN], [s.walk0 + 1, ROWS.wallN], [s.walk0 + 2, ROWS.wallN]];
-          this.addDoor(L, arch, 'z', { arch: true });
-          this.reserveAround(L, arch, 3, 'z');
-          for (let z = ROWS.northA; z <= ROWS.northB; z++) for (let x = sl.x; x < sl.x + STAIR_SLOT; x++) this.reserved[L][ix(x, z)] = 1;
-          r.archCells = arch;
-        } else {
-          this.rect(L, sl.x, ROWS.northA, sl.x + STAIR_SLOT - 1, ROWS.northB, T.HOLE);
-          for (let z = s.zTop; z <= s.zBot; z++) for (let x = s.x0; x < s.x0 + STAIR_W; x++) { this.set(L, x, z, T.STAIR); lv.stair[ix(x, z)] = s.id; }
-          const r = this.addRoom(L, 'stairs', s.x0, s.zTop, s.x0 + STAIR_W - 1, s.zBot, { stair: s.id, top: true });
-          const arch = [[s.x0, ROWS.wallN], [s.x0 + 1, ROWS.wallN], [s.x0 + 2, ROWS.wallN]];
-          this.addDoor(L, arch, 'z', { arch: true });
-          this.reserveAround(L, arch, 3, 'z');
-          r.archCells = arch;
-        }
-      }
-      // ---- portas para o corredor ----
-      const corridorDoorCols = [];
-      for (const s of slots[L]) { const so = stairObj[s.s]; corridorDoorCols.push(s.side === 'lower' ? so.walk0 : so.x0); }
-      const southCorr = southRooms.filter(r => r.z1 === ROWS.southB);
-      for (const r of southCorr) {
-        if (r.type === 'hall') {
-          const aw = Math.min(8, r.x1 - r.x0 - 3);
-          const ax = r.x0 + Math.floor((r.x1 - r.x0 + 1 - aw) / 2);
-          const cells = []; for (let x = ax; x < ax + aw; x++) cells.push([x, ROWS.wallS]);
-          this.addDoor(L, cells, 'z', { arch: true }); this.reserveAround(L, cells, 3, 'z');
-          r.archCells = cells; corridorDoorCols.push(ax, ax + aw - 3);
-        } else {
-          const dx = rng.int(r.x0 + 1, r.x1 - 3);
-          this.addDoor(L, [[dx, ROWS.wallS], [dx + 1, ROWS.wallS], [dx + 2, ROWS.wallS]], 'z');
-          corridorDoorCols.push(dx);
-        }
-      }
-      for (const r of northRooms) {
-        const dx = rng.int(r.x0 + 1, r.x1 - 3);
-        this.addDoor(L, [[dx, ROWS.wallN], [dx + 1, ROWS.wallN], [dx + 2, ROWS.wallN]], 'z');
-        corridorDoorCols.push(dx);
-      }
-      // ---- portas extras entre salas vizinhas (rotas alternativas) ----
-      const bandRooms = [southRooms, northRooms];
-      for (const band of bandRooms) {
-        const sorted = band.slice().sort((a, b) => a.x0 - b.x0);
-        for (let i = 0; i < sorted.length; i++) for (let j = 0; j < sorted.length; j++) {
-          const a = sorted[i], b = sorted[j];
-          if (a.x1 + 2 !== b.x0) continue;
-          const z0 = Math.max(a.z0, b.z0) + 1, z1 = Math.min(a.z1, b.z1) - 3;
-          if (z1 < z0) continue;
-          if (!rng.chance(L === 1 || L === 2 ? 0.5 : 0.4)) continue;
-          const dz = rng.int(z0, z1);
-          this.addDoor(L, [[a.x1 + 1, dz], [a.x1 + 1, dz + 1], [a.x1 + 1, dz + 2]], 'x');
-        }
-      }
-      // ---- porta atravessando o corredor ----
-      if ((L === 1 || L === 2 || L === 0) && rng.chance(0.55)) {
-        for (let t = 0; t < 40; t++) {
-          const cx = rng.int(fx0 + 6, fx1 - 6);
-          if (corridorDoorCols.some(dc => cx >= dc - 3 && cx <= dc + 5)) continue;
-          this.addDoor(L, [[cx, ROWS.corrA], [cx, ROWS.corrA + 1], [cx, ROWS.corrA + 2]], 'x', { corridor: true, open: rng.chance(0.3) });
-          this.set(L, cx, ROWS.corrB, T.WALL);
-          break;
-        }
-      }
-      // ---- saída (térreo, hall) ----
-      if (L === 1) {
-        const hall = southRooms.find(r => r.type === 'hall');
-        const ex = Math.floor((hall.x0 + hall.x1) / 2) - 1;
-        const cells = [[ex, 0], [ex + 1, 0], [ex + 2, 0]];
-        for (const [x, z] of cells) this.set(L, x, z, T.EXIT);
-        m.exit = { level: 1, cells, x: (ex + 1.5) * CELL, z: 0.5 * CELL, room: hall.id };
-        this.reserveAround(L, cells, 4, 'z');
-        // spawns no hall
-        const hx = (hall.x0 + hall.x1 + 1) / 2 * CELL;
-        const pts = [[-1.0, 0], [1.0, 0], [-1.0, 1.4], [1.0, 1.4]];
-        for (const [ox, oz] of pts) m.spawns.push({ level: 1, x: hx + ox, z: 4.2 + oz, yaw: Math.PI });
-        for (const s of m.spawns) this.reserved[1][ix(Math.floor(s.x / CELL), Math.floor(s.z / CELL))] = 1;
-        for (let z = 7; z <= 12; z++) for (let x = Math.floor(hx / CELL) - 3; x <= Math.floor(hx / CELL) + 2; x++) this.reserved[1][ix(x, z)] = 1;
+    }
+    const corridorDoorCols = [];
+    for (const sl of slotsL) corridorDoorCols.push(this.buildSlot(L, sl, fx0, fx1));
+    for (const r of southRooms) {
+      const dx = rng.int(r.x0 + 1, r.x1 - 3);
+      this.addDoor(L, [[dx, ROWS.wallS], [dx + 1, ROWS.wallS], [dx + 2, ROWS.wallS]], 'z');
+      corridorDoorCols.push(dx);
+    }
+    for (const r of northRooms) {
+      const dx = rng.int(r.x0 + 1, r.x1 - 3);
+      this.addDoor(L, [[dx, ROWS.wallN], [dx + 1, ROWS.wallN], [dx + 2, ROWS.wallN]], 'z');
+      corridorDoorCols.push(dx);
+    }
+    for (const band of [southRooms, northRooms]) {
+      const sorted = band.slice().sort((a, b) => a.x0 - b.x0);
+      for (let i = 0; i < sorted.length; i++) for (let j = 0; j < sorted.length; j++) {
+        const a = sorted[i], b = sorted[j];
+        if (a.x1 + 2 !== b.x0) continue;
+        const z0 = Math.max(a.z0, b.z0) + 1, z1 = Math.min(a.z1, b.z1) - 3;
+        if (z1 < z0 || !rng.chance(0.55)) continue;
+        const dz = rng.int(z0, z1);
+        this.addDoor(L, [[a.x1 + 1, dz], [a.x1 + 1, dz + 1], [a.x1 + 1, dz + 2]], 'x');
       }
     }
-    // reaplica ids de sala em células de porta/arco ficam -1 (são de transição)
+    if (L === 0 && rng.chance(0.4)) {
+      for (let t = 0; t < 40; t++) {
+        const cx = rng.int(fx0 + 6, fx1 - 6);
+        if (corridorDoorCols.some(dc => cx >= dc - 3 && cx <= dc + 5)) continue;
+        this.addDoor(L, [[cx, ROWS.corrA], [cx, ROWS.corrA + 1], [cx, ROWS.corrA + 2]], 'x', { corridor: true, open: rng.chance(0.3) });
+        this.set(L, cx, ROWS.corrB, T.WALL);
+        break;
+      }
+    }
     return true;
   }
 
@@ -419,13 +547,18 @@ class Gen {
   placeFurniture() {
     const m = this.map, rng = this.rng;
     for (const room of m.rooms) {
-      const tpl = (room.type === 'corridor' && room.level === 0) ? TEMPLATES.bcorridor : (room.type === 'corridor' && room.level === 3) ? TEMPLATES.acorridor : (TEMPLATES[room.type] || []);
+      // v3: a passarela central do sótão fica livre (sob a cumeeira do telhado)
+      const tpl = (room.type === 'corridor' && room.level === 0) ? TEMPLATES.bcorridor : (room.type === 'corridor' && room.level === 3) ? [] : (TEMPLATES[room.type] || []);
       if (room.type === 'stairs') continue;
       const req = REQUIRED_FURNITURE[room.type] || [];
       // v2: primeiro os móveis obrigatórios (com mais tentativas), depois o resto do modelo do cômodo
       const order = [...tpl.filter(it => req.includes(it.kind)), ...tpl.filter(it => !req.includes(it.kind))];
+      // v3: cômodos grandes recebem mais decoração (proporcional à área), sem mexer nos móveis do centro
+      const area = (room.x1 - room.x0 + 1) * (room.z1 - room.z0 + 1);
+      const scale = (room.level === 0 || room.level === 3 || room.type === 'corridor') ? 1 : Math.max(1, Math.min(2.2, area / 180));
       for (const item of order) {
         let n = rng.int(item.n[0], item.n[1]);
+        if (!req.includes(item.kind) && item.place !== 'center' && scale > 1) n = Math.round(n * (item.container ? Math.sqrt(scale) : scale));
         if (req.includes(item.kind)) n = Math.max(1, n);
         if (room.type === 'corridor') n = Math.min(n + Math.floor((room.x1 - room.x0) / 30), 4);
         for (let k = 0; k < n; k++) {
@@ -624,7 +757,7 @@ class Gen {
             const win = { level: L, x: px, z: pz, rot, room: room.id, small: L === 3 };
             m.windows.push(win);
             // cortina-esconderijo na frente de algumas janelas
-            if (L <= 2 && ['living', 'bedroom', 'master', 'library', 'music', 'dining', 'study', 'nursery'].includes(room.type) && rng.chance(0.35)) {
+            if (L <= 2 && ['living', 'bedroom', 'master', 'library', 'music', 'dining', 'study', 'nursery', 'ballroom', 'gallery', 'conservatory', 'servant'].includes(room.type) && rng.chance(0.35)) {
               const cc = [];
               for (let k = 0; k < 2; k++) {
                 const cx = horiz ? wx + k - 1 + 1 : fx, cz = horiz ? fz : wz + k;
@@ -641,14 +774,18 @@ class Gen {
       }
       // quadros nas paredes
       if (L >= 1 && L <= 2 && room.type !== 'bathroom') {
-        const n = room.type === 'corridor' ? 6 : rng.int(1, 3);
+        const n = room.type === 'corridor' ? 6 : rng.int(1, 3) + Math.floor((room.x1 - room.x0 + 1) * (room.z1 - room.z0 + 1) / 140);
         for (let k = 0; k < n; k++) {
           const p = this.wallSpot(room, 1.6);
           if (p) m.decor.push({ kind: 'painting', level: L, ...p, w: rng.float(0.5, 0.9), h: rng.float(0.6, 1.0), v: rng.int(0, 7) });
         }
       }
       // tapetes
-      if (['hall', 'living', 'dining', 'bedroom', 'master', 'library', 'study', 'music', 'nursery'].includes(room.type)) {
+      if (['hall', 'gallery'].includes(room.type)) {
+        // hall/galeria: tapete longo da porta até o pé da escadaria (só na parte da frente)
+        const w = (room.x1 - room.x0 + 1) * CELL, z0 = room.type === 'hall' ? 3.0 : 1.4, z1 = (ROWS.wallN - 4) * CELL;
+        m.decor.push({ kind: 'runner', level: L, x: (room.x0 + room.x1 + 1) / 2 * CELL, z: (z0 + z1) / 2, w: z1 - z0, d: Math.min(3.2, w * 0.35), v: 0, alongZ: true });
+      } else if (['living', 'dining', 'bedroom', 'master', 'library', 'study', 'music', 'nursery', 'ballroom'].includes(room.type)) {
         const w = (room.x1 - room.x0 + 1) * CELL, d = (room.z1 - room.z0 + 1) * CELL;
         m.decor.push({ kind: 'rug', level: L, x: (room.x0 + room.x1 + 1) / 2 * CELL, z: (room.z0 + room.z1 + 1) / 2 * CELL, w: Math.max(1.5, w * 0.55), d: Math.max(1.5, d * 0.5), v: rng.int(0, 2) });
       }
@@ -742,7 +879,8 @@ class Gen {
       if (l.kind !== 'candle' || l.prop === undefined) continue;
       const p = m.props[l.prop], base = LEVELS[l.level].y;
       if (p.kind === 'dining_table') { l.kind = 'flame'; l.y = base + 1.2; continue; }
-      l.y = base + (SURFACE_Y[p.kind] ?? 0.8);
+      l.y = base + (SURFACE_Y[p.kind] ?? (p.kind === 'altar' ? 1.0 : 0.8));
+      if (p.kind === 'altar') { const th = [0, Math.PI / 2, Math.PI, -Math.PI / 2][p.facing]; l.x = p.x + 0.5 * Math.cos(th); l.z = p.z - 0.5 * Math.sin(th); }
       if (p.kind === 'desk') {
         // escrivaninha: tampo recuado e com papéis/livro/tinteiro — a vela vai para o canto livre da frente-esquerda
         const horiz = p.facing === 0 || p.facing === 2, d = (horiz ? p.sz : p.sx) * CELL, Dp = Math.min(d - 0.4, 0.75);
@@ -791,10 +929,13 @@ class Gen {
       return;
     }
     if (room.type === 'stairs') {
-      if (!room.top) m.lamps.push({ kind: 'emergency', level: L, x: cx, y: base + 2.6, z: (ROWS.northB) * CELL + 0.2, rot: Math.PI, color: L === 0 ? 0xff2a1a : 0xff5530, intensity: 1.4, range: 8, state: 'on' });
+      if (!room.top && !room.grand) m.lamps.push({ kind: 'emergency', level: L, x: cx, y: base + 2.6, z: (ROWS.northB) * CELL + 0.2, rot: Math.PI, color: L === 0 ? 0xff2a1a : 0xff5530, intensity: 1.4, range: 8, state: 'on' });
       return;
     }
-    if (['hall', 'dining', 'living', 'master'].includes(room.type)) {
+    if (room.type === 'hall' || room.type === 'gallery') {
+      // dois lustres ao longo do hall/galeria (parte da frente) e um atrás da escadaria
+      for (const zz of [0.3, 0.68]) m.lamps.push({ kind: 'chandelier', level: L, x: cx, y: base + h - 0.9, z: (1 + zz * (ROWS.wallN - 1)) * CELL, color: 0xffb060, intensity: 3.2, range: 10, state: rng.chance(0.2) ? 'flicker' : 'on' });
+    } else if (['dining', 'living', 'master', 'ballroom', 'library'].includes(room.type)) {
       m.lamps.push({ kind: 'chandelier', level: L, x: cx, y: base + h - 0.9, z: cz, color: 0xffb060, intensity: 3.2, range: 10, state: rng.chance(0.2) ? 'flicker' : 'on' });
     }
     if (L === 0 || L === 3) {
@@ -810,8 +951,8 @@ class Gen {
       const fp = m.props.find(p => p.room === room.id && p.kind === 'fireplace');
       if (fp) m.lamps.push({ kind: 'fire', level: L, x: fp.x + [0, 0.3, 0, -0.3][fp.facing], y: base + 0.5, z: fp.z + [0.3, 0, -0.3, 0][fp.facing], color: 0xff6a20, intensity: 2.6, range: 8, state: 'flicker' });
     }
-    for (const p of m.props.filter(p => p.room === room.id && ['desk', 'reading_table', 'nightstand', 'sideboard', 'dining_table'].includes(p.kind))) {
-      if (rng.chance(0.6)) m.lamps.push({ kind: 'candle', level: L, x: p.x, y: base + (p.kind === 'nightstand' ? 0.62 : 0.82), z: p.z, color: 0xff9040, intensity: 0.9, range: 4, state: 'flicker', prop: p.id });
+    for (const p of m.props.filter(p => p.room === room.id && ['desk', 'reading_table', 'nightstand', 'sideboard', 'dining_table', 'altar'].includes(p.kind))) {
+      if (rng.chance(p.kind === 'altar' ? 1 : 0.6)) m.lamps.push({ kind: 'candle', level: L, x: p.x, y: base + (p.kind === 'nightstand' ? 0.62 : 0.82), z: p.z, color: 0xff9040, intensity: 0.9, range: 4, state: 'flicker', prop: p.id });
     }
   }
   wallSpotAt(room, x) {
@@ -841,8 +982,8 @@ class Gen {
   }
 }
 
-export function tryGenerate(seed, attempt) {
-  const g = new Gen(seed, attempt);
+export function tryGenerate(seed, attempt, size = 3) {
+  const g = new Gen(seed, attempt, size);
   if (!g.build()) return null;
   g.placeFurniture();
   g.decorate();
@@ -900,18 +1041,22 @@ export function validateMap(map) {
   // 5. escadas conectadas nas duas pontas
   for (const st of map.stairs) {
     if (!reach(st.lower, st.x0 + 1, st.zBot)) errors.push('escada sem base ' + st.key);
-    if (!reach(st.upper, st.x0 + 1, st.zTop - 1)) errors.push('escada sem topo ' + st.key);
+    if (!reach(st.upper, st.x0 + 1, st.zTop + (st.dir === 1 ? 1 : -1))) errors.push('escada sem topo ' + st.key);
   }
   // cada andar alcançável
-  for (let L = 0; L < 4; L++) if (!map.rooms.some(r => r.level === L && r.type === 'corridor' && reach(L, r.x0 + 2, r.z0 + 1))) errors.push('andar inacessível ' + L);
+  const hubOf = (L) => map.rooms.find(r => r.level === L && ['corridor', 'hall', 'gallery'].includes(r.type));
+  const hubCell = (r) => { for (let z = r.z0; z <= r.z1; z++) for (let x = r.x0; x <= r.x1; x++) if (get(r.level, x, z) === T.FLOOR && lv[r.level].room[ix(x, z)] === r.id) { let ok = true; for (let a = -1; a <= 1 && ok; a++) for (let b = -1; b <= 1; b++) { const t = get(r.level, x + a, z + b); if (!(t === T.FLOOR || t === T.DOOR || t === T.CURTAIN)) { ok = false; break; } } if (ok) return [x, z]; } return null; };
+  for (let L = 0; L < 4; L++) { const h = hubOf(L), c = h && hubCell(h); if (!h || !c || !reach(L, c[0], c[1])) errors.push('andar inacessível ' + L); }
   // 6. navegação da criatura (folga 3x3, portas abertas)
   const cWalk = (L, x, z) => { for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) { const t = get(L, x + a, z + b); if (!(t === T.FLOOR || t === T.DOOR || t === T.STAIR || t === T.CURTAIN)) return false; } return true; };
   const cs = map.creatureSpawn;
   if (!cs) errors.push('sem spawn da criatura');
   else {
     const creach = bfs([cs.level, Math.floor(cs.x / CELL), Math.floor(cs.z / CELL)], cWalk);
-    for (const r of map.rooms) if (r.type === 'corridor') { if (!creach(r.level, r.x0 + 3, r.z0 + 2)) errors.push('criatura não alcança corredor L' + r.level); }
+    for (let L = 0; L < 4; L++) { const h = hubOf(L), c = h && hubCell(h); if (!c || !creach(L, c[0], c[1])) errors.push('criatura não alcança o centro do andar L' + L); }
     for (const st of map.stairs) if (!creach(st.lower, st.x0 + 1, st.zBot) || !creach(st.upper, st.x0 + 1, st.zTop)) errors.push('criatura não usa escada ' + st.key);
+    // v3: todo cômodo (exceto escadas) alcançável pela criatura
+    for (const r of map.rooms) { if (r.type === 'stairs') continue; let ok = false; for (let z = r.z0; z <= r.z1 && !ok; z++) for (let x = r.x0; x <= r.x1; x++) if (creach(r.level, x, z)) { ok = true; break; } if (!ok) errors.push(`criatura não alcança ${r.name} L${r.level}`); }
     const hall = map.rooms[map.exit.room];
     let hallOk = false;
     for (let z = hall.z0; z <= hall.z1 && !hallOk; z++) for (let x = hall.x0; x <= hall.x1; x++) if (creach(1, x, z)) { hallOk = true; break; }
@@ -968,23 +1113,34 @@ export function mapHash(map) {
   return (h >>> 0).toString(16) + '-' + map.containers.length + '-' + map.props.length;
 }
 
+// v3: parâmetros COMPLETOS do gerador. O servidor manda exatamente isto no 'start' e o cliente gera a partir
+// disto (sem padrões próprios) — assim os dois sempre constroem a mesma mansão. version = GEN_VERSION de quem gerou.
+export function normSize(size) { return [1, 2, 3].includes(+size) ? +size : 3; }
+export function genParams(seed, size) { return { seed: String(seed), size: normSize(size), version: GEN_VERSION }; }
+export function generateFromParams(gen, opts = {}) {
+  if (!gen || gen.seed === undefined || gen.seed === null || ![1, 2, 3].includes(gen.size)) throw new Error('parâmetros do gerador ausentes ou inválidos');
+  return generateMansion(gen.seed, { ...opts, size: gen.size });
+}
+
 const cache = new Map();
-export function generateMansion(seed, { noCache = false } = {}) {
-  seed = String(seed);
-  if (!noCache && cache.has(seed)) return cache.get(seed);
+// size: 1 = mansão compacta (1 jogador), 2 = média, 3 = grande (padrão; usado também pelos testes)
+export function generateMansion(seed, { noCache = false, size = 3 } = {}) {
+  seed = String(seed); size = normSize(size);
+  const ck = seed + '|' + size;
+  if (!noCache && cache.has(ck)) return cache.get(ck);
   let map = null, validation = null;
-  for (let attempt = 0; attempt < 12; attempt++) {
-    const m = tryGenerate(seed, attempt);
+  for (let attempt = 0; attempt < 16; attempt++) {
+    const m = tryGenerate(seed, attempt, size);
     if (!m) continue;
     const v = validateMap(m);
     if (v.ok) { map = m; validation = v; break; }
   }
   if (!map) {
     // configuração previamente validada
-    for (let attempt = 0; attempt < 12 && !map; attempt++) { const m = tryGenerate(FALLBACK_SEED, attempt); if (m && validateMap(m).ok) map = m; }
+    for (let attempt = 0; attempt < 16 && !map; attempt++) { const m = tryGenerate(FALLBACK_SEED, attempt, size); if (m && validateMap(m).ok) map = m; }
     map.fallbackFrom = seed;
   }
   map.hash = mapHash(map);
-  if (!noCache) { cache.set(seed, map); if (cache.size > 30) cache.delete(cache.keys().next().value); }
+  if (!noCache) { cache.set(ck, map); if (cache.size > 30) cache.delete(cache.keys().next().value); }
   return map;
 }

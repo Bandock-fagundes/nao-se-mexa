@@ -1,8 +1,8 @@
 // Partida autoritativa: jogadores, chaves, portas, saída, criatura, mortes, vitória/derrota.
-import { generateMansion } from '../shared/mapgen.js';
+import { genParams, generateFromParams } from '../shared/mapgen.js';
 import { World, cellOf } from '../shared/world.js';
 import { Nav } from '../shared/nav.js';
-import { PHASES, PLAYER, CREATURE, AI, CELL, LEVELS, T, NET, SOUND_TYPES, CREAK } from '../shared/config.js';
+import { PHASES, PLAYER, CREATURE, AI, CELL, LEVELS, T, NET, SOUND_TYPES, CREAK, WAKE } from '../shared/config.js';
 import { makeRng } from '../shared/rng.js';
 import { Creature, STATE_LABEL } from './creature.js';
 import { ScentGrid } from './scent.js';
@@ -13,9 +13,14 @@ const fin = (v) => typeof v === 'number' && Number.isFinite(v);
 const ROOM_SCENT = { kitchen: 0.7, bathroom: 0.7, cellar: 1.2, boiler: 0.8, laundry: 0.7, attic: 1.1 };
 
 export class Match {
-  constructor({ seed, phase = 1, players = [], test = false, keySeed }) {
+  constructor({ seed, phase = 1, players = [], test = false, keySeed, size = 3, wake = false }) {
     this.seed = String(seed); this.phase = phase; this.phaseCfg = PHASES[phase]; this.test = test;
-    this.map = generateMansion(this.seed);
+    // v3: parâmetros completos do gerador — os mesmos que vão para o cliente no 'start'
+    this.gen = genParams(this.seed, size);
+    this.size = this.gen.size;
+    this.map = generateFromParams(this.gen);
+    // v3: cena "acordando" — espera todos carregarem ('wait'), depois congela tudo durante a cena ('intro')
+    this.pre = wake ? { stage: 'wait', waited: 0, left: WAKE.seconds, ready: new Set() } : null;
     this.world = new World(this.map);
     this.nav = new Nav(this.world);
     this.rng = makeRng('match|' + this.seed + '|' + phase + '|' + (keySeed ?? ''));
@@ -106,7 +111,7 @@ export class Match {
   // ---------- entrada de movimento (validada) ----------
   applyInput(id, inp) {
     const p = this.players.get(id);
-    if (!p || !p.alive || p.escaped || !p.connected || this.ended) return { ignored: true };
+    if (!p || !p.alive || p.escaped || !p.connected || this.ended || this.pre) return { ignored: true };
     if (!fin(inp.x) || !fin(inp.z)) return { ignored: true };
     const t = this.t;
     if (fin(inp.yaw)) p.yaw = inp.yaw;
@@ -142,7 +147,10 @@ export class Match {
     // passos → eventos sonoros (v2): agachado = silêncio; andando em pé = só às vezes a madeira range
     // (ouvido de perto); correndo = sem rangido, mas os passos "pá pá pá" são ouvidos
     p.stepAcc += dist;
-    const kind = speed > 3.3 ? 'run' : (crouch && speed < 1.9 ? 'crouch' : 'walk');
+    // v3: quem está correndo (tecla de corrida, em pé, em movimento) continua 'run' mesmo quando a velocidade medida
+    // cai na hora de virar/frear — antes isso virava 'walk' e podia gerar rangido durante a corrida. Declarar corrida
+    // só deixa o jogador MAIS barulhento, então não abre trapaça.
+    const kind = (speed > 3.3 || (p.run && !crouch && speed > 0.8)) ? 'run' : (crouch && speed < 1.9 ? 'crouch' : 'walk');
     const stride = kind === 'run' ? 0.95 : kind === 'crouch' ? 0.55 : 0.75;
     if (p.stepAcc >= stride) {
       p.stepAcc = 0;
@@ -186,7 +194,7 @@ export class Match {
   // ---------- interações (validadas) ----------
   interact(id, req) {
     const p = this.players.get(id);
-    if (!p || !p.alive || p.escaped || !p.connected || this.ended) return { ok: false, msg: 'Você não pode interagir agora.' };
+    if (!p || !p.alive || p.escaped || !p.connected || this.ended || this.pre) return { ok: false, msg: 'Você não pode interagir agora.' };
     const kind = req && req.kind, tid = req && req.id;
     const w = this.world;
     const near = (x, z, level, maxD) => level === p.level && Math.hypot(x - p.x, z - p.z) <= maxD && w.noWallBetween(p.level, p.x, p.z, x, z);
@@ -322,8 +330,22 @@ export class Match {
     this.creatureSound('kill');
   }
   // ---------- passo de simulação ----------
+  // ---------- v3: início sincronizado (cena "acordando") ----------
+  markLoaded(id) { if (this.pre && this.pre.stage === 'wait') { this.pre.ready.add(id); this.checkGo(); } }
+  checkGo() {
+    const pre = this.pre; if (!pre || pre.stage !== 'wait') return;
+    const waiting = [...this.players.values()].filter(p => p.connected && !p.left && !pre.ready.has(p.id));
+    if (waiting.length === 0 || pre.waited >= WAKE.waitMax) { pre.stage = 'intro'; this.emit({ type: 'go', intro: pre.left }); }
+  }
   tick(dt) {
     if (this.ended) return;
+    if (this.pre) {
+      // nada acontece enquanto os jogadores carregam / acordam: criatura parada, sem mortes, relógio da partida parado
+      if (this.pre.stage === 'wait') { this.pre.waited += dt; this.checkGo(); return; }
+      this.pre.left -= dt;
+      if (this.pre.left > 0) return;
+      this.pre = null; this.emit({ type: 'begin' });
+    }
     this.t += dt;
     const t = this.t;
     // rastros de cheiro (depositados ao longo do trajeto, a cada 0,25 s)
@@ -426,7 +448,8 @@ export class Match {
   fullState() {
     const parts = this.partOpen.map(a => Array.from(a));
     return {
-      seed: this.seed, phase: this.phase, keysNeeded: this.keysNeeded, mapHash: this.map.hash,
+      seed: this.seed, phase: this.phase, keysNeeded: this.keysNeeded, mapHash: this.map.hash, size: this.size, gen: { ...this.gen },
+      pre: this.pre ? { stage: this.pre.stage, left: +this.pre.left.toFixed(2) } : null,
       doors: Array.from(this.world.doorOpen), containers: Array.from(this.containerOpen), parts,
       // chaves: onde estão (o cliente só mostra as visíveis: sobre mesas ou em partes abertas)
       keys: this.keys.map(k => ({ id: k.id, spot: k.spot, state: k.state, by: k.by })),

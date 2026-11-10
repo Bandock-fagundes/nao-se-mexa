@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createGameServer } from '../server/index.js';
-import { generateMansion } from '../shared/mapgen.js';
+import { generateFromParams } from '../shared/mapgen.js';
 import { clearCorridor } from '../test/helpers.js';
 import { World } from '../shared/world.js';
 import { launch, newPage, sleep } from './launch.mjs';
@@ -73,7 +73,8 @@ try {
   const seedA = await A.evaluate(() => window.__game.seed), seedB = await B.evaluate(() => window.__game.seed);
   check('mesma semente nas duas páginas', seedA === seedB, seedA);
   check('mapa do cliente confere com o servidor (hash)', await A.evaluate(() => window.__game.hashOk) && await B.evaluate(() => window.__game.hashOk));
-  const map = generateMansion(seedA);
+  // v3: o tamanho da casa depende do número de jogadores — usa exatamente os parâmetros que o servidor mandou
+  const map = generateFromParams(await A.evaluate(() => window.__game.gen));
   const ids = { A: await A.evaluate(() => window.__app.myId), B: await B.evaluate(() => window.__app.myId) };
   const send = (pg, m) => pg.evaluate((m) => window.__app.net.send(m), m);
   // estaciona a criatura longe
@@ -81,9 +82,9 @@ try {
   await send(A, { t: 'debug', cmd: 'creature', x: cs.x, z: cs.z, level: cs.level, state: 'hold' });
   // ---------- corredor: mão + lanterna, colega à frente ----------
   const corr = clearCorridor({ map }, 1, 22) || clearCorridor({ map }, 1, 14);
-  const ax = corr.x0, az = corr.z;
-  await send(A, { t: 'debug', cmd: 'tp', x: ax, z: az, level: 1 });
-  await send(B, { t: 'debug', cmd: 'tp', x: ax + 4.5, z: az - 0.5, level: 1 });
+  const ax = corr.x0, az = corr.z, aL = corr.L; // v3: o trecho livre pode estar em outro andar (c.L)
+  await send(A, { t: 'debug', cmd: 'tp', x: ax, z: az, level: aL });
+  await send(B, { t: 'debug', cmd: 'tp', x: ax + 4.5, z: az - 0.5, level: aL });
   await A.evaluate(() => window.__game.setLook(-Math.PI / 2, -0.04));
   await B.evaluate(() => window.__game.setLook(-Math.PI / 2 - 0.5, -0.1));
   await sleep(4000);
@@ -177,22 +178,22 @@ try {
   await shot(A, 'sound-wave.png', 300);
   await hq(A, 'low');
   // correr = passos ouvidos (onda baixa); agachar = silêncio
-  await send(A, { t: 'debug', cmd: 'tp', x: ax, z: az, level: 1 });
+  await send(A, { t: 'debug', cmd: 'tp', x: ax, z: az, level: aL });
   await A.evaluate(() => window.__game.setLook(-Math.PI / 2, 0));
   await sleep(2500);
   await A.evaluate(() => { window.__game.waves = []; });
   await A.keyboard.down('ShiftLeft'); await A.keyboard.down('KeyW'); await sleep(2500); await A.keyboard.up('KeyW'); await A.keyboard.up('ShiftLeft');
   const wRun = await A.evaluate(() => window.__game.debugState().waves);
   check('correndo: passos geram onda BAIXA', wRun.includes('low'), JSON.stringify(wRun));
-  await send(A, { t: 'debug', cmd: 'tp', x: ax, z: az, level: 1 }); await sleep(2000);
+  await send(A, { t: 'debug', cmd: 'tp', x: ax, z: az, level: aL }); await sleep(2000);
   await A.evaluate(() => { window.__game.waves = []; });
   await A.keyboard.press('KeyC'); await A.keyboard.down('KeyW'); await sleep(2500); await A.keyboard.up('KeyW'); await A.keyboard.press('KeyC');
   const wCr = await A.evaluate(() => window.__game.debugState().waves);
   check('agachado: silêncio total (sem onda)', wCr.length === 0, JSON.stringify(wCr));
   await hq(A, 'low');
   // ---------- encontro com a criatura ----------
-  await send(A, { t: 'debug', cmd: 'tp', x: ax, z: az, level: 1 });
-  await send(A, { t: 'debug', cmd: 'creature', x: ax + 5.5, z: az, level: 1, yaw: -Math.PI / 2, state: 'freeze' });
+  await send(A, { t: 'debug', cmd: 'tp', x: ax, z: az, level: aL });
+  await send(A, { t: 'debug', cmd: 'creature', x: ax + 5.5, z: az, level: aL, yaw: -Math.PI / 2, state: 'freeze' });
   await send(B, { t: 'debug', cmd: 'tp', x: map.spawns[0].x, z: map.spawns[0].z, level: 1 });
   await A.evaluate(() => window.__game.setLook(-Math.PI / 2, 0.12));
   await sleep(3000);
@@ -205,7 +206,8 @@ try {
   const pB = await A.evaluate(() => window.__game.lastSnap.players.find(p => p.id !== window.__app.myId));
   await send(A, { t: 'debug', cmd: 'creature', x: pB.x + 0.7, z: pB.z, level: pB.level, yaw: -Math.PI / 2, state: 'hold' });
   // B se mexe encostado nela (v2: o toque mata quem se mexe ou foi percebido; parado e despercebido, não)
-  for (let i = 0; i < 6; i++) { await B.evaluate(() => { window.__game.p.x += 0.04; }); await sleep(120); }
+  // continua se mexendo até o servidor confirmar a morte (o toque só conta se ainda estiver se mexendo ao encostar)
+  for (let i = 0; i < 25; i++) { await B.evaluate(() => { window.__game.p.x += 0.03; }); await sleep(120); const pb = [...srv.manager.rooms.values()][0].match.players.get(ids.B); if (!pb || !pb.alive) break; }
   // estado no servidor (o servidor de jogo roda neste mesmo processo)
   const srvMatch = () => [...srv.manager.rooms.values()][0].match;
   const dumpSrv = (tag) => { const m = srvMatch(); const b = m.players.get(ids.B), c = m.creature; log(tag, JSON.stringify({ B: { x: b.x, z: b.z, y: b.y, level: b.level, alive: b.alive, conn: b.connected }, C: { x: c.x, z: c.z, y: c.y, level: c.level, state: c.state } })); };
