@@ -59,6 +59,9 @@ export class Game {
     this.handFront = new THREE.DirectionalLight(0xffe6cc, 0); this.handFront.position.set(-0.35, 0.5, 1); this.R.handScene.add(this.handFront);
     this.spot = new THREE.SpotLight(0xe8f0ff, 0, 28, 0.42, 0.45, 1.0);
     this.spot.castShadow = this.R.q.shadows; this.spot.shadow.mapSize.set(this.R.q.shadowSize, this.R.q.shadowSize); this.spot.shadow.camera.near = 0.15; this.spot.shadow.bias = -0.0006; this.spot.shadow.normalBias = 0.02;
+    // v4: a sombra da lanterna só considera 14 m (a luz vai até 28 m, mas lá longe já é fraca e a névoa cobre):
+    // menos objetos entram no mapa de sombra a cada quadro. A única luz com sombra é a lanterna (luminárias sem sombra).
+    { const sh = this.spot.shadow, up = sh.updateMatrices.bind(sh); sh.updateMatrices = (light) => { const d = light.distance; light.distance = Math.min(d || 14, 14); up(light); light.distance = d; }; }
     this.R.scene.add(this.spot); this.R.scene.add(this.spot.target);
     this.beam = makeBeamCone(7.5, 0.36, 0.06); this.R.scene.add(this.beam);
     this.R.onQualityChange = (q) => { this.spot.castShadow = q.shadows; this.spot.shadow.mapSize.set(q.shadowSize, q.shadowSize); if (this.spot.shadow.map) { this.spot.shadow.map.dispose(); this.spot.shadow.map = null; } };

@@ -143,14 +143,15 @@ export function buildMansion(map, world, M) {
     }
     for (const [key, b] of builders) {
       const geo = b.build(); if (!geo) continue;
-      const m = new THREE.Mesh(geo, M[key]); m.receiveShadow = true; m.castShadow = key !== 'ceiling' && key !== 'ceilingDark' && !key.startsWith('floor');
-      levels[L].add(m);
+      // v4: em pedaços de ~8 m (recorte por frustum funciona; antes era uma malha do andar inteiro por material)
+      addChunked(levels[L], geo, M[key], key !== 'ceiling' && key !== 'ceilingDark' && !key.startsWith('floor'));
     }
   }
 
   // ---------- escadas ----------
+  const stairGroups = [];
   for (const st of map.stairs) {
-    const g = new THREE.Group(); levels[st.lower].add(g);
+    const g = new THREE.Group(); levels[st.lower].add(g); stairGroups.push(g);
     const yA = LEVELS[st.lower].y, yB = LEVELS[st.upper].y, rise = yB - yA, N = 24;
     const dir = st.dir === 1 ? 1 : -1, len = (Math.abs(st.zTop - st.zBot) + 1) * CELL, run = len / N;
     const x0 = st.x0 * CELL, wdt = st.w * CELL, zb = dir === 1 ? st.zBot * CELL : (st.zBot + 1) * CELL;
@@ -181,6 +182,7 @@ export function buildMansion(map, world, M) {
     }
   }
 
+  for (const g of stairGroups) mergeLocal(g); // v4: degraus/balaústres/corrimão por material (eram ~150 malhas por escada)
   // ---------- móveis ----------
   const staticByLevel = [[], [], [], []];
   for (const p of map.props) {
@@ -233,6 +235,9 @@ export function buildMansion(map, world, M) {
       for (const zz of [0.045, -0.045]) S(pv, 0.03, M.brass, -side * (lw - 0.07), dh * 0.47, zz, 0xffffff, 1, 1, 1, 10);
       leaves.push({ pv, side });
     }
+    // v4: funde as peças de cada folha (gira junto) e as guarnições do batente — ~20 malhas → ~6 por porta
+    for (const lf of leaves) mergeLocal(lf.pv);
+    mergeLocal(g, (o) => leaves.some(lf => lf.pv === o));
     const view = { id: d.id, level: d.level, g, leaves, open: false, cur: 0, swing: d.swing, type: d.type, x: d.x, z: d.z };
     res.doors[d.id] = view;
     const bx = d.axis === 'z' ? new THREE.Vector3(half + 0.05, 0, 0.45) : new THREE.Vector3(0.45, 0, half + 0.05);
@@ -271,6 +276,7 @@ export function buildMansion(map, world, M) {
     const g = buildKnockable(k.kind, M);
     g.position.set(k.x, LEVELS[k.level].y, k.z); g.rotation.y = k.rot; levels[k.level].add(g);
     const view = { id: k.id, kind: k.kind, g, knocked: false, t: 0, level: k.level, rot: k.rot };
+    mergeLocal(g); // v4: as peças do objeto caem juntas
     res.knockables[k.id] = view;
     res.interact.push({ kind: 'knock', id: k.id, level: k.level, box: new THREE.Box3(new THREE.Vector3(k.x - 0.25, LEVELS[k.level].y, k.z - 0.25), new THREE.Vector3(k.x + 0.25, LEVELS[k.level].y + (g.userData.h || 0.4) + 0.1, k.z + 0.25)) });
   }
@@ -370,6 +376,7 @@ export function buildMansion(map, world, M) {
       lamp.bulb = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.07, 0.03), glowMat); lamp.bulb.position.set(0, 0, 0.09); g.add(lamp.bulb);
       lamp.lz = l.z + Math.cos(l.rot || 0) * 0.3;
     }
+    mergeLocal(g); // v4: suporte/braço/aro da luminária numa malha só (lâmpadas e cúpula ficam separadas: sem cor por vértice)
     if (lamp.bulb && l.state === 'flicker') { lamp.bulb.material = glowMat.clone(); res.flickerMeshes.push(lamp); }
     if (lamp.bulbs && l.state === 'flicker') { const mm = glowMat.clone(); lamp.bulbs.forEach(b => b.material = mm); res.flickerMeshes.push(lamp); }
     lamp.seed = Math.random() * 100;
@@ -433,17 +440,80 @@ function placeNotes(map, res, levels, M) {
   }
 }
 
+// ---------- v4: fusão local e pedaços ----------
+const _inv = new THREE.Matrix4(), _m4 = new THREE.Matrix4();
+const mergeable = (o) => o.isMesh && !o.isInstancedMesh && !o.isSkinnedMesh && o.visible && !Array.isArray(o.material) && !o.children.length &&
+  Object.keys(o.userData).every(k => k === 'wuv') && o.geometry.attributes.color && o.geometry.attributes.uv && o.geometry.attributes.normal;
+const KEEP_ATTR = ['position', 'normal', 'uv', 'color'];
+// geometria sem índice (RoundedBox…) ganha índice trivial 0,1,2… para poder ser fundida com as indexadas
+function indexed(g) { if (!g.index) { const n = g.attributes.position.count, a = new (n > 65535 ? Uint32Array : Uint16Array)(n); for (let i = 0; i < n; i++) a[i] = i; g.setIndex(new THREE.BufferAttribute(a, 1)); } return g; }
+// funde as malhas filhas de `node` por material, no espaço local de `node` (a peça continua podendo se mexer).
+// `stop(o)` = filhos que NÃO entram (partes móveis próprias, subgrupos com referência no jogo).
+export function mergeLocal(node, stop = (o) => !!o.userData.dynamic) {
+  node.updateMatrixWorld(true);
+  _inv.copy(node.matrixWorld).invert();
+  const buckets = new Map(), used = [];
+  const walk = (o) => {
+    for (const ch of o.children) {
+      if (stop(ch)) continue;
+      if (mergeable(ch)) {
+        const geo = indexed(ch.geometry.clone()).applyMatrix4(_m4.multiplyMatrices(_inv, ch.matrixWorld));
+        for (const k of Object.keys(geo.attributes)) if (!KEEP_ATTR.includes(k)) geo.deleteAttribute(k);
+        if (!buckets.has(ch.material)) buckets.set(ch.material, { geos: [], objs: [], cast: false });
+        const b = buckets.get(ch.material); b.geos.push(geo); b.objs.push(ch); b.cast ||= ch.castShadow;
+      } else if (!ch.isMesh && ch.visible && !ch.isLight) walk(ch);
+    }
+  };
+  walk(node);
+  for (const [mat, b] of buckets) {
+    if (b.geos.length < 2) continue;
+    const merged = mergeGeometries(b.geos, false); if (!merged) continue;
+    for (const o of b.objs) o.parent.remove(o);
+    const m = new THREE.Mesh(merged, mat); m.castShadow = b.cast; m.receiveShadow = true; node.add(m); used.push(m);
+  }
+  return used;
+}
+// divide uma geometria indexada (já em coordenadas do mundo) em pedaços de `tile` m pelo centro dos triângulos.
+// Os pedaços compartilham os mesmos atributos (um buffer só na GPU) e cada um tem índice e esfera envolvente próprios.
+const CHUNK = 10, CHUNK_MIN_TRIS = 3000; // malhas pequenas não compensam dividir (mais draw calls que economia)
+export function addChunked(parent, geo, mat, cast, tile = CHUNK) {
+  const idx = geo.index.array, pos = geo.attributes.position.array, groups = new Map();
+  if (idx.length / 3 < CHUNK_MIN_TRIS) tile = 1e6;
+  for (let t = 0; t < idx.length; t += 3) {
+    const a = idx[t] * 3, b = idx[t + 1] * 3, c = idx[t + 2] * 3;
+    const cx = (pos[a] + pos[b] + pos[c]) / 3, cz = (pos[a + 2] + pos[b + 2] + pos[c + 2]) / 3;
+    const key = Math.floor(cx / tile) * 1000 + Math.floor(cz / tile);
+    let arr = groups.get(key); if (!arr) groups.set(key, arr = []);
+    arr.push(idx[t], idx[t + 1], idx[t + 2]);
+  }
+  const out = [];
+  for (const arr of groups.values()) {
+    const g = groups.size === 1 ? geo : new THREE.BufferGeometry();
+    if (g !== geo) { for (const k of Object.keys(geo.attributes)) g.setAttribute(k, geo.attributes[k]); g.setIndex(arr); }
+    const box = new THREE.Box3(), v = new THREE.Vector3();
+    for (const i of arr) box.expandByPoint(v.fromArray(pos, i * 3));
+    const sph = new THREE.Sphere(); box.getCenter(sph.center); let r2 = 0;
+    for (const i of arr) r2 = Math.max(r2, v.fromArray(pos, i * 3).distanceToSquared(sph.center));
+    sph.radius = Math.sqrt(r2); g.boundingBox = box; g.boundingSphere = sph;
+    const m = new THREE.Mesh(g, mat); m.castShadow = cast; m.receiveShadow = true; parent.add(m); out.push(m);
+  }
+  return out;
+}
+
 function mergeStatic(groups, parent, root) {
   const buckets = new Map();
   for (const g of groups) {
     g.updateMatrixWorld(true);
+    // v4: dentro de cada parte móvel (gaveta, porta de armário, tampa, roupas) funde as peças por material
+    const dynRoots = []; g.traverse(o => { if (o !== g && o.userData.dynamic && !o.isMesh) dynRoots.push(o); });
+    for (const d of dynRoots) mergeLocal(d);
     const remove = [];
     g.traverse(o => {
       if (!o.isMesh) return;
       let a = o, dynamic = false;
       while (a && a !== g.parent) { if (a.userData.dynamic) { dynamic = true; break; } a = a.parent; }
-      if (dynamic || !o.geometry.attributes.color || !o.geometry.attributes.uv || !o.geometry.index) return;
-      const geo = o.geometry.clone().applyMatrix4(o.matrixWorld);
+      if (dynamic || !o.geometry.attributes.color || !o.geometry.attributes.uv || Array.isArray(o.material)) return;
+      const geo = indexed(o.geometry.clone()).applyMatrix4(o.matrixWorld);
       for (const k of Object.keys(geo.attributes)) if (!['position', 'normal', 'uv', 'color'].includes(k)) geo.deleteAttribute(k);
       if (!buckets.has(o.material)) buckets.set(o.material, []);
       buckets.get(o.material).push(geo);
@@ -454,9 +524,8 @@ function mergeStatic(groups, parent, root) {
   for (const [mat, geos] of buckets) {
     const merged = mergeGeometries(geos, false);
     if (!merged) continue;
-    const m = new THREE.Mesh(merged, mat); m.castShadow = true; m.receiveShadow = true;
-    // as coordenadas já estão no espaço do mundo: o pai (nível) está na origem
-    parent.add(m);
+    // as coordenadas já estão no espaço do mundo: o pai (nível) está na origem. v4: em pedaços de ~8 m
+    addChunked(parent, merged, mat, true);
   }
 }
 

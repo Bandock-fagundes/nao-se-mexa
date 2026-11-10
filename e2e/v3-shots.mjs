@@ -40,7 +40,7 @@ async function stand(pg, x, z, level, tx, ty, tz, crouch = false) {
 
 try {
   const map = generateMansion(SEED, { size: 1 });
-  const pg = await newPage(browser, `${base}/testar?e2e=1&quality=${process.env.Q || 'medium'}`, (...a) => log('page', ...a), 1280, 720);
+  const pg = await newPage(browser, `${base}/testar?e2e=1&quality=${process.env.Q || 'medium'}${process.env.EXTRA || ''}`, (...a) => log('page', ...a), 1280, 720);
   await pg.waitForSelector('#testar.on');
   // mapa dos 4 andares (gerador da aba TESTAR JOGO)
   if (want('map')) {

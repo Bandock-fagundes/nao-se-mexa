@@ -17,7 +17,8 @@ const params = new URLSearchParams(location.search);
 const isTest = location.pathname.startsWith('/testar');
 
 // ---------------- configurações e estatísticas ----------------
-const DEFAULTS = { quality: 'medium', resScale: 1, master: 0.8, sfx: 0.9, ambient: 0.7, music: 0.6, sensitivity: 1, fov: 72, invertY: false };
+// v4: dynRes (resolução dinâmica), fpsTarget (0 = sem limite), maxRes ('1080'|'1440'|'2160'|'native'), sharpness 0..1, showFps (painel F3)
+const DEFAULTS = { quality: 'medium', resScale: 1, dynRes: true, fpsTarget: 60, maxRes: 'native', sharpness: 0.5, showFps: false, master: 0.8, sfx: 0.9, ambient: 0.7, music: 0.6, sensitivity: 1, fov: 72, invertY: false };
 function load(k, d) { try { return { ...d, ...JSON.parse(localStorage.getItem(k) || '{}') }; } catch { return { ...d }; } }
 const app = {
   settings: load('nsm_settings', DEFAULTS),
@@ -26,6 +27,13 @@ const app = {
   phase: 1, diagOn: true, playing: false,
 };
 if (params.get('quality') && QUALITY[params.get('quality')]) app.settings.quality = params.get('quality');
+// v4: parâmetros de teste/captura (não são salvos): ?res=0.67 (escala fixa) ?dynres=0|1 ?sharp=0..1 ?maxres=1080
+const urlOver = {};
+if (params.has('res')) { urlOver.resScale = +params.get('res'); urlOver.dynRes = false; }
+if (params.has('dynres')) urlOver.dynRes = params.get('dynres') === '1';
+if (params.has('sharp')) urlOver.sharpness = +params.get('sharp');
+if (params.has('maxres')) urlOver.maxRes = params.get('maxres');
+const renderSettings = () => ({ ...app.settings, ...urlOver, preserve: params.has('e2e') && !params.has('dynres') });
 app.saveSettings = () => localStorage.setItem('nsm_settings', JSON.stringify(app.settings));
 app.saveStats = () => localStorage.setItem('nsm_stats', JSON.stringify(app.stats));
 app.audio.vol = { master: app.settings.master, sfx: app.settings.sfx, ambient: app.settings.ambient, music: app.settings.music };
@@ -158,17 +166,32 @@ const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt
 function fillSettings() {
   const s = app.settings;
   $('#setQuality').value = s.quality; $('#setRes').value = s.resScale; $('#setMaster').value = s.master; $('#setSfx').value = s.sfx; $('#setAmb').value = s.ambient; $('#setMusic').value = s.music ?? 0.6; $('#setSens').value = s.sensitivity; $('#setFov').value = s.fov; $('#setInvert').checked = !!s.invertY;
+  $('#setDyn').checked = !!s.dynRes; $('#setFps').value = String(s.fpsTarget ?? 60); $('#setMaxRes').value = s.maxRes || 'native'; $('#setSharp').value = s.sharpness ?? 0.5; $('#setShowFps').checked = !!s.showFps;
   labels();
 }
-function labels() { const s = app.settings; $('#vRes').textContent = Math.round(s.resScale * 100) + '%'; $('#vMaster').textContent = Math.round(s.master * 100) + '%'; $('#vSfx').textContent = Math.round(s.sfx * 100) + '%'; $('#vAmb').textContent = Math.round(s.ambient * 100) + '%'; $('#vMusic').textContent = Math.round((s.music ?? 0.6) * 100) + '%'; $('#vSens').textContent = (+s.sensitivity).toFixed(2) + '×'; $('#vFov').textContent = s.fov + '°'; }
+function labels() { const s = app.settings; $('#vRes').textContent = Math.round(s.resScale * 100) + '%'; $('#vMaster').textContent = Math.round(s.master * 100) + '%'; $('#vSfx').textContent = Math.round(s.sfx * 100) + '%'; $('#vAmb').textContent = Math.round(s.ambient * 100) + '%'; $('#vMusic').textContent = Math.round((s.music ?? 0.6) * 100) + '%'; $('#vSens').textContent = (+s.sensitivity).toFixed(2) + '×'; $('#vFov').textContent = s.fov + '°'; $('#vSharp').textContent = Math.round((s.sharpness ?? 0.5) * 100) + '%'; $('#vRes').textContent = s.dynRes ? 'automática' : Math.round(s.resScale * 100) + '%'; $('#setRes').disabled = !!s.dynRes; }
 function applySettings() {
   const s = app.settings;
+  const prevQ = s.quality;
   s.quality = $('#setQuality').value; s.resScale = +$('#setRes').value; s.master = +$('#setMaster').value; s.sfx = +$('#setSfx').value; s.ambient = +$('#setAmb').value; s.music = +$('#setMusic').value; s.sensitivity = +$('#setSens').value; s.fov = +$('#setFov').value; s.invertY = $('#setInvert').checked;
-  app.saveSettings(); labels();
+  s.dynRes = $('#setDyn').checked; s.fpsTarget = +$('#setFps').value; s.maxRes = $('#setMaxRes').value; s.sharpness = +$('#setSharp').value; s.showFps = $('#setShowFps').checked;
+  // escolher Ultra libera a saída até 4K (o preset sozinho não muda a resolução máxima)
+  if (s.quality === 'ultra' && prevQ !== 'ultra' && s.maxRes !== 'native') { s.maxRes = '2160'; $('#setMaxRes').value = '2160'; }
+  app.saveSettings(); labels(); fpsBox();
   app.audio.setVolumes({ master: s.master, sfx: s.sfx, ambient: s.ambient, music: s.music });
-  if (app.renderer) app.renderer.applySettings(s);
+  if (app.renderer) app.renderer.applySettings(renderSettings());
 }
-for (const id of ['#setQuality', '#setRes', '#setMaster', '#setSfx', '#setAmb', '#setMusic', '#setSens', '#setFov', '#setInvert']) $(id).addEventListener('input', applySettings);
+for (const id of ['#setDyn', '#setFps', '#setMaxRes', '#setSharp', '#setShowFps', '#setQuality', '#setRes', '#setMaster', '#setSfx', '#setAmb', '#setMusic', '#setSens', '#setFov', '#setInvert']) $(id).addEventListener('input', applySettings);
+// v4: painel de FPS / resolução de render (F3 ou Configurações)
+function fpsBox() { $('#fpsBox').classList.toggle('hidden', !app.settings.showFps); }
+window.addEventListener('keydown', (e) => { if (e.code === 'F3') { e.preventDefault(); app.settings.showFps = !app.settings.showFps; app.saveSettings(); fpsBox(); } });
+let fpsAcc = 0;
+function renderFps(dt) {
+  fpsAcc += dt; if (fpsAcc < 0.25 || !app.settings.showFps || !app.renderer) return; fpsAcc = 0;
+  const st = app.renderer.stats();
+  $('#fpsBox').textContent = `${st.fps.toFixed(0)} FPS · ${st.ms.toFixed(1)} ms\nRender ${st.rw}×${st.rh} (${Math.round(st.scale * 100)}%) → tela ${st.ow}×${st.oh}\n${st.dyn ? 'Resolução dinâmica' : 'Resolução fixa'} · ${st.calls} draw calls · ${(st.tris / 1000).toFixed(0)} mil triângulos`;
+}
+fpsBox();
 $('#btnTestSound').addEventListener('click', () => { app.audio.init(); app.audio.play('door_rusty', null); setTimeout(() => app.audio.play('cstep', null), 700); });
 $('#settingsBack').addEventListener('click', () => { if (app.fromPause) { app.fromPause = false; show(null); overlay('pause', true); } else show('menu'); });
 // ---------------- rede ----------------
@@ -207,7 +230,7 @@ async function startGame(m) {
   try {
     await L.step(0.12, 'Gerando a mansão (semente ' + m.seed + ')…');
     if (!app.renderer) {
-      app.renderer = new Renderer($('#stage'), { ...app.settings, preserve: params.has('e2e') });
+      app.renderer = new Renderer($('#stage'), renderSettings());
       await L.step(0.28, 'Preparando o renderizador…');
       app.M = buildMaterials(app.renderer.q.tex);
     }
@@ -292,10 +315,12 @@ function musicTension(dt) {
 }
 function frame(now) {
   requestAnimationFrame(frame);
+  if (app.renderer && !app.noRender && !app.renderer.shouldRender(now)) return; // v4: limite de FPS (30/60/120)
   const dt = Math.min(0.05, (now - app.last) / 1000); app.last = now;
   if (!app.game) return;
   try { app.game.update(dt); } catch (e) { console.error(e); }
   musicTension(dt);
+  renderFps(dt);
   if (!app.noRender) app.renderer.render(); // noRender: usado só pelo teste E2E para poupar CPU entre capturas
   diagAcc += dt;
   if (diagAcc > 0.25 && !$('#diag').classList.contains('hidden')) { diagAcc = 0; renderDiag(); }

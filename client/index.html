@@ -74,14 +74,24 @@
         <p class="err" id="lobbyErr"></p>
       </div>
     </section>
+    <div id="fpsBox" class="hidden"></div>
     <!-- ===== CONFIGURAÇÕES ===== -->
     <section id="settings" class="screen panel-screen">
       <div class="panel">
         <h2>Configurações</h2>
         <label class="field">Qualidade gráfica
-          <select id="setQuality"><option value="low">Baixa (sem sombras, sem brilho)</option><option value="medium">Média</option><option value="high">Alta (sombras 2048, oclusão ambiente)</option></select>
+          <select id="setQuality"><option value="low">Baixa (sem sombras, sem brilho)</option><option value="medium">Média</option><option value="high">Alta (sombras 2048, oclusão ambiente, SMAA)</option><option value="ultra">Ultra (4K: até 3840×2160, texturas 1024)</option></select>
         </label>
-        <label class="field">Resolução <span id="vRes"></span><input type="range" id="setRes" min="0.5" max="1" step="0.05" /></label>
+        <label class="check"><input type="checkbox" id="setDyn" /> Resolução dinâmica (ajusta sozinha para manter o FPS, com upscale + nitidez)</label>
+        <label class="field">FPS alvo
+          <select id="setFps"><option value="30">30</option><option value="60">60</option><option value="120">120</option><option value="0">Sem limite</option></select>
+        </label>
+        <label class="field">Resolução máxima
+          <select id="setMaxRes"><option value="1080">1080p (Full HD)</option><option value="1440">1440p (2K)</option><option value="2160">4K (2160p)</option><option value="native">Nativa do monitor</option></select>
+        </label>
+        <label class="field">Escala de renderização (com a dinâmica desligada) <span id="vRes"></span><input type="range" id="setRes" min="0.5" max="1" step="0.05" /></label>
+        <label class="field">Nitidez <span id="vSharp"></span><input type="range" id="setSharp" min="0" max="1" step="0.05" /></label>
+        <label class="check"><input type="checkbox" id="setShowFps" /> Mostrar FPS e resolução (F3)</label>
         <label class="field">Volume geral <span id="vMaster"></span><input type="range" id="setMaster" min="0" max="1" step="0.05" /></label>
         <label class="field">Efeitos sonoros <span id="vSfx"></span><input type="range" id="setSfx" min="0" max="1" step="0.05" /></label>
         <label class="field">Ambiente <span id="vAmb"></span><input type="range" id="setAmb" min="0" max="1" step="0.05" /></label>
