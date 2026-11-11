@@ -752,13 +752,13 @@ export class Game {
       // v6: o corpo da criatura (cabeça, mãos, ombros) se projeta ~0,9 m à frente da raiz e 0,55 m para os lados;
       // o servidor só colide o centro (raio 0,42). Recuo visual suave para nunca enfiar a cabeça/mãos numa parede,
       // janela ou porta fechada.
-      { const push = this.creatureWallPush(L, c.position.x, c.position.z, c.rotation.y, cb.anim === 'run' ? 1.45 : cb.anim === 'sniff' ? 1.15 : 0.95);
+      { const push = this.creatureWallPush(L, c.position.x, c.position.z, c.rotation.y);
         this.crPush = this.crPush || { x: 0, z: 0 };
         this.crPush.x += (push.x - this.crPush.x) * Math.min(1, dt * 10); this.crPush.z += (push.z - this.crPush.z) * Math.min(1, dt * 10);
         c.position.x += this.crPush.x; c.position.z += this.crPush.z; }
       this.crState = cb;
       const li = (f) => (typeof ca[f] === 'number' && typeof cb[f] === 'number') ? ca[f] + (cb[f] - ca[f]) * k : undefined;
-      this.cr.anim.update(dt, { anim: cb.anim, animT: cb.animT, speed: ca.speed + (cb.speed - ca.speed) * k, headYaw: ca.headYaw + (cb.headYaw - ca.headYaw) * k, headPitch: ca.headPitch + (cb.headPitch - ca.headPitch) * k, yaw: c.rotation.y, duck: this.crDuck, vx: li('vx'), vz: li('vz'), turn: li('turn') });
+      this.cr.anim.update(dt, { anim: cb.anim, animT: cb.animT, speed: ca.speed + (cb.speed - ca.speed) * k, headYaw: ca.headYaw + (cb.headYaw - ca.headYaw) * k, headPitch: ca.headPitch + (cb.headPitch - ca.headPitch) * k, yaw: c.rotation.y, duck: this.crDuck, vx: li('vx'), vz: li('vz'), turn: li('turn'), free: this.crFree ?? 1.6 });
     }
     // colegas
     let si = 0;
@@ -792,7 +792,10 @@ export class Game {
         from = crp.clone();
       } else m.grabbed = undefined;
       const lv = sp.level, ly = LEVELS[lv] ? LEVELS[lv].y : 0;
-      animateTeammate(v, dt, { speed: m.speed, crouch: sp.crouch, alive: sp.alive, fl: sp.fl, pitch: sp.pitch, headYaw: face.headYaw, grab, from, reach: sp.reach || null,
+      // v9: medo — criatura visível no mesmo andar, a menos de ~10 m: o boneco parado se encolhe e treme
+      let fear = 0;
+      if (sp.alive && this.cr.root.visible && this.crState && this.crState.level === sp.level) { const crp = this.cr.root.position; fear = Math.max(0, Math.min(1, (10 - Math.hypot(crp.x - x, crp.z - z)) / 6)); }
+      animateTeammate(v, dt, { fear, speed: m.speed, crouch: sp.crouch, alive: sp.alive, fl: sp.fl, pitch: sp.pitch, headYaw: face.headYaw, grab, from, reach: sp.reach || null,
         ground: (gx, gz) => this.world.floorY(lv, gx, gz),
         solid: (gx, gy, gz) => { const c = this.world.cell(lv, cellOf(gx), cellOf(gz)); if (c === T.LOW) return gy - ly < 0.75; return c !== T.FLOOR && c !== T.STAIR && c !== T.CURTAIN && c !== T.HOLE && !(c === T.DOOR && this.world.doorOpen[this.world.doorAt(lv, cellOf(gx), cellOf(gz))]); } });
       // passos remotos
@@ -813,14 +816,17 @@ export class Game {
     for (; si < this.remoteSpots.length; si++) { this.remoteSpots[si].s.intensity = 0; this.remoteSpots[si].c.visible = false; }
   }
   // v6: deslocamento (x,z) que tira as partes salientes da criatura de dentro de paredes/portas fechadas
-  // v9: reach = até onde as mãos/cabeça se projetam (correndo, os braços vão ~1,45 m à frente)
   creatureWallPush(L, x, z, yaw, reach = 0.95) {
     const fx = Math.sin(yaw), fz = Math.cos(yaw), rx = Math.cos(yaw), rz = -Math.sin(yaw);
     const solid = (px, pz) => { const cx = cellOf(px), cz = cellOf(pz), t = this.world.cell(L, cx, cz); return t === T.WALL || t === T.VOID || t === T.TALL || ((t === T.DOOR || t === T.EXIT) && this.world.isDoorClosedCell(L, cx, cz)); };
     let back = 0, side = 0;
     for (let d = reach; d >= 0.45; d -= 0.1) for (const o of [0, -0.3, 0.3]) if (solid(x + fx * d + rx * o, z + fz * d + rz * o)) back = Math.max(back, reach + 0.03 - d);
     for (const sg of [-1, 1]) for (let d = 0.6; d >= 0.42; d -= 0.06) if (solid(x + rx * sg * d + fx * 0.25, z + rz * sg * d + fz * 0.25)) { side -= sg * (0.62 - d); break; }
-    back = Math.min(back, reach > 1 ? 0.9 : 0.5); side = Math.max(-0.2, Math.min(0.2, side));
+    back = Math.min(back, 0.5);
+    // v9: espaço livre à frente (até 1,6 m) — correndo, os braços que alcançam à frente se recolhem perto de paredes
+    let free = 1.6;
+    for (let d = 0.5; d <= 1.6; d += 0.1) { if (solid(x + fx * d, z + fz * d) || solid(x + fx * d + rx * 0.35, z + fz * d + rz * 0.35) || solid(x + fx * d - rx * 0.35, z + fz * d - rz * 0.35)) { free = d; break; } }
+    this.crFree = free; side = Math.max(-0.2, Math.min(0.2, side));
     return { x: -fx * back + rx * side, z: -fz * back + rz * side };
   }
   // distância (m) até a primeira superfície à frente da câmera — marcha barata pela grade (paredes, móveis

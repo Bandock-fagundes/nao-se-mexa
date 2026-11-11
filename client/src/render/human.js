@@ -506,7 +506,13 @@ export function animateTeammate(t, dt, s) {
   const v = Math.hypot(t.vel.x, t.vel.z);
   const crouch = !!s.crouch;
   t.walk += (clamp(v / 1.4, 0, 1) - t.walk) * Math.min(1, dt * 6);
-  t.run += ((v > 3.0 ? 1 : 0) - t.run) * Math.min(1, dt * 4);
+  t.run += (sstep(2.5, 3.4, v) - t.run) * Math.min(1, dt * 5); // v9: transição contínua andar→correr
+  // v9: aceleração (inclina ao arrancar, assenta ao parar) e giro da raiz (o tronco antecipa, a pélvis atrasa)
+  { const a = (v - (t.prevV ?? v)) / dt; t.prevV = v; t.accel = (t.accel || 0) + (clamp(a, -8, 8) - (t.accel || 0)) * Math.min(1, dt * 10);
+    const yr = t.prevYaw === undefined ? 0 : wrapPI(yaw - t.prevYaw) / dt; t.prevYaw = yaw; t.yawRate = (t.yawRate || 0) + (clamp(yr, -8, 8) - (t.yawRate || 0)) * Math.min(1, dt * 8); }
+  t.time = (t.time || 0) + dt;
+  // v9: medo — parado com a criatura por perto: encolhe, prende os braços, treme (s.fear 0..1)
+  t.fear = (t.fear || 0) + ((s.fear || 0) * (v < 0.4 ? 1 : 0.25) - (t.fear || 0)) * Math.min(1, dt * 3);
   t.crouch += ((crouch ? 1 : 0) - t.crouch) * Math.min(1, dt * 6);
   const w = t.walk, run = t.run, cr = t.crouch;
   // ---------------- marcha ----------------
@@ -569,16 +575,23 @@ export function animateTeammate(t, dt, s) {
   const ph = t.cyc * Math.PI * 2, cL = Math.cos(ph); // cL > 0: perna esquerda à frente
   const hy = clamp(s.headYaw || 0, -1.3, 1.3);
   const pitch = s.pitch || 0;
-  t.pelvis.rotation.y = k('pelY', -cL * lerp(0.1, 0.16, run) * w + hy * 0.08, 12, 0.7);
-  t.pelvis.rotation.x = k('pelX', cr * 0.25 + run * 0.12, 10, 0.75);
-  const swSide = t.feet[0].planted ? -1 : (t.feet[1].planted ? 1 : 0);
-  t.pelvis.rotation.z = k('pelZ', swSide * 0.035 * w * (1 - run * 0.5), 10, 0.7);
-  t.spine.rotation.x = k('spX', cr * 0.22 + run * 0.16 + w * 0.04, 10, 0.65);
-  t.spine.rotation.y = k('spY', cL * lerp(0.13, 0.2, run) * w + hy * 0.22 - t.pelvis.rotation.y * 0.3, 10, 0.6);
-  t.spine.rotation.z = k('spZ', -t.pelvis.rotation.z * 0.8, 10, 0.7);
+  const fear = t.fear, tt = t.time, idle = 1 - w;
+  const lean = clamp(t.accel * 0.035, -0.14, 0.16);               // arranque: tomba à frente; parada: joga para trás e volta
+  const turnLead = clamp(t.yawRate * 0.06, -0.25, 0.25);        // giro: o tronco vai antes, a pélvis depois
+  t.pelvis.rotation.y = k('pelY', -cL * lerp(0.1, 0.16, run) * w + hy * 0.08 - turnLead * 0.5, 12, 0.7);
+  t.pelvis.rotation.x = k('pelX', cr * 0.25 + run * 0.12 + lean * 0.3, 10, 0.75);
+  // v9: transferência de peso — a pélvis desliza para cima do pé de apoio e o quadril do lado livre cai
+  const f0 = t.feet[0], f1 = t.feet[1];
+  const stance = (f0.planted ? 1 : 0) - (f1.planted ? 1 : 0);   // +1: apoio no pé +X (esquerdo do boneco)
+  const idleShift = Math.sin(tt * 0.45) * 0.6 + Math.sin(tt * 0.17) * 0.4;
+  t.pelvis.position.x = k('pelPx', (stance * 0.026 * w * (1 - run * 0.6) + idleShift * 0.014 * idle * (1 - cr)) * f0.s, 8, 0.8);
+  t.pelvis.rotation.z = k('pelZ', -stance * f0.s * 0.055 * w * (1 - run * 0.5) - idleShift * 0.03 * idle * (1 - cr), 9, 0.65);
+  t.spine.rotation.x = k('spX', cr * 0.22 + run * 0.16 + w * 0.04 + lean + fear * 0.12, 9, 0.6);
+  t.spine.rotation.y = k('spY', cL * lerp(0.13, 0.2, run) * w + hy * 0.22 - t.pelvis.rotation.y * 0.3 + turnLead, 10, 0.6);
+  t.spine.rotation.z = k('spZ', -t.pelvis.rotation.z * 0.85 + (Math.sin(tt * 37) * 0.6 + Math.sin(tt * 23) * 0.4) * 0.008 * fear, 10, 0.7);
   // quadril: altura desejada, depois limitada pelo alcance das pernas (pés plantados nunca flutuam)
-  let bodyY = k('bodyY', -0.03 - 0.29 * cr - run * 0.05, 12, 0.8);
-  const fwdLean = k('lean', 0.02 * w + run * 0.06 - cr * 0.03, 10, 0.8);
+  let bodyY = k('bodyY', -0.03 - 0.29 * cr - run * 0.05 - fear * 0.05 * (1 - cr), 12, 0.8);
+  const fwdLean = k('lean', 0.02 * w + run * 0.06 - cr * 0.03 + lean * 0.12, 10, 0.8);
   t.body.position.set(0, bodyY, fwdLean);
   root.updateMatrixWorld(true);
   let drop = 0;
@@ -610,16 +623,20 @@ export function animateTeammate(t, dt, s) {
     toe.rotation.set(-Math.max(0, f.pitch) * 0.45, 0, 0); // dedos ficam no chão enquanto o calcanhar sobe
   }
   // ---------------- braços ----------------
-  const armA = lerp(0.32, 0.85, run) * w * (1 - 0.5 * cr);
-  P['clav1'].rotation.z = k('clL', 0.04 * cL * w - run * 0.05, 10, 0.7);
-  P['clav-1'].rotation.z = k('clR', -0.03 - 0.05 * cr, 10, 0.7);
-  P['clav1'].rotation.y = k('clLy', -cL * 0.06 * w, 10, 0.7);
-  P['sh1'].rotation.x = k('shL', cL * armA - cr * 0.35 - run * 0.15, 9, 0.6);
-  P['sh1'].rotation.z = k('shLz', 0.09 + run * 0.12 + cr * 0.05, 9, 0.6);
-  P['el1'].rotation.x = k('elL', -0.4 - Math.max(0, -cL) * 0.45 * w - run * 1.0 - cr * 0.5, 9, 0.55);
-  P['wr1'].rotation.x = k('wrL', 0.1 + 0.1 * w, 9, 0.6);
+  const armA = lerp(0.32, 0.85, run) * w * (1 - 0.5 * cr) * (1 - fear * 0.8);
+  const breath = Math.sin(tt * lerp(1.6, 3.2, Math.max(run, fear)));
+  const trem = (Math.sin(tt * 41) * 0.5 + Math.sin(tt * 29 + 1) * 0.5) * fear;
+  // ombros: sobem com a respiração; com medo encolhem (sobem e vão para a frente)
+  P['clav1'].rotation.z = k('clL', 0.04 * cL * w - run * 0.05 + 0.012 * breath * idle + 0.13 * fear + trem * 0.012, 10, 0.7);
+  P['clav-1'].rotation.z = k('clR', -0.03 - 0.05 * cr - 0.012 * breath * idle - 0.1 * fear - trem * 0.012, 10, 0.7);
+  P['clav1'].rotation.y = k('clLy', -cL * 0.06 * w - 0.08 * fear, 10, 0.7);
+  // braço esquerdo: balanço oposto à perna (com atraso no cotovelo); com medo, a mão vai ao peito
+  P['sh1'].rotation.x = k('shL', cL * armA - cr * 0.35 - run * 0.15 - 0.55 * fear, 9, 0.6);
+  P['sh1'].rotation.z = k('shLz', 0.09 + run * 0.12 + cr * 0.05 - 0.06 * fear, 9, 0.6);
+  P['el1'].rotation.x = k('elL', -0.4 - Math.max(0, -cL) * 0.45 * w - run * 1.0 - cr * 0.5 - 1.25 * fear, 7.5, 0.5);
+  P['wr1'].rotation.x = k('wrL', 0.1 + 0.1 * w + Math.sin(ph - 0.8) * 0.12 * w + trem * 0.05, 8, 0.55);
   // braço direito aponta a lanterna para onde a cabeça olha (compensa a torção do tronco)
-  P['sh-1'].rotation.x = k('shR', -0.62 - pitch * 0.7 - t.spine.rotation.x - t.pelvis.rotation.x + 0.04 * cL * w, 10, 0.6);
+  P['sh-1'].rotation.x = k('shR', -0.62 - pitch * 0.7 - t.spine.rotation.x - t.pelvis.rotation.x - 0.09 * cL * w * (1 - run * 0.5) + trem * 0.02, 10, 0.6);
   P['sh-1'].rotation.y = k('shRy', clamp(hy - t.spine.rotation.y - t.pelvis.rotation.y, -0.8, 0.8) * 0.9, 10, 0.6);
   P['sh-1'].rotation.z = k('shRz', -0.1, 10, 0.6);
   P['el-1'].rotation.x = k('elR', -0.82 - run * 0.35 + cr * 0.1, 10, 0.55);
@@ -639,11 +656,14 @@ export function animateTeammate(t, dt, s) {
   }
   // ---------------- cabeça ----------------
   const twist = t.spine.rotation.y + t.pelvis.rotation.y;
-  t.neck.rotation.x = k('nk', -pitch * 0.4 - t.spine.rotation.x * 0.7 - t.pelvis.rotation.x * 0.6, 10, 0.7);
-  t.neck.rotation.y = k('nkY', (hy - twist) * 0.45, 10, 0.7);
-  t.head.rotation.x = k('hd', -pitch * 0.35, 12, 0.7);
-  t.head.rotation.y = k('hdY', (hy - twist) * 0.5, 12, 0.7);
-  t.head.rotation.z = k('hdZ', -t.spine.rotation.z * 0.6, 12, 0.7);
+  // v9: cabeça estabilizada contra o balanço (aceno leve no apoio), olhadas curtas parado, encolhida com medo
+  const mid = Math.cos(2 * ph);
+  const glance = idle * (1 - fear) * (Math.sin(tt * 0.31) * 0.6 + Math.sin(tt * 0.83 + 2) * 0.4) * 0.07;
+  t.neck.rotation.x = k('nk', -pitch * 0.4 - t.spine.rotation.x * 0.7 - t.pelvis.rotation.x * 0.6 + 0.035 * mid * w * (1 - run * 0.5) + 0.16 * fear, 10, 0.7);
+  t.neck.rotation.y = k('nkY', (hy - twist) * 0.45 + glance * 0.4 - turnLead * 0.4, 10, 0.7);
+  t.head.rotation.x = k('hd', -pitch * 0.35 - 0.1 * fear, 12, 0.7);
+  t.head.rotation.y = k('hdY', (hy - twist) * 0.5 + glance * 0.6 + trem * 0.02, 12, 0.7);
+  t.head.rotation.z = k('hdZ', -t.spine.rotation.z * 0.6 - t.pelvis.rotation.z * 0.3, 12, 0.7);
   t.lensMat.emissiveIntensity = s.fl ? 3 : 0;
   t.first = false;
   updateAccessory(t, dt);

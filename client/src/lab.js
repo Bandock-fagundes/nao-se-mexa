@@ -84,7 +84,7 @@ if (view === 'creature') {
       const sp2 = q.get('stop') && f > n0 * 0.6 ? 0 : sp;
       t.root.rotation.y += turn / 60;
       px += Math.sin(t.root.rotation.y) * sp2 / 60; pz += Math.cos(t.root.rotation.y) * sp2 / 60; t.root.position.set(px, 0, pz);
-      animateTeammate(t, 1 / 60, { speed: sp2, crouch: !!q.get('c'), alive: q.get('dead') && f > n0 * 0.5 ? false : true, fl: true, pitch: 0, from: q.get('dead') ? new THREE.Vector3(px - fx, 0, pz - fz) : null });
+      animateTeammate(t, 1 / 60, { fear: +(q.get('fear') || 0), speed: sp2, crouch: !!q.get('c'), alive: q.get('dead') && f > n0 * 0.5 ? false : true, fl: true, pitch: 0, from: q.get('dead') ? new THREE.Vector3(px - fx, 0, pz - fz) : null });
     }
     t.root.position.set((i - (N - 1) / 2) * gap, 0, 0);
     t.root.updateMatrixWorld(true);
@@ -108,7 +108,7 @@ if (view === 'creature') {
   const look = q.get('acc') ? sanitizeLook({ acc: q.get('acc'), col: q.get('col') || '8a2a24' }) : null;
   const t = buildTeammate(M, +(q.get('i') || 0), look); scene.add(t.root); t.root.rotation.y = +(q.get('r') || 0.6);
   const n = +(q.get('n') || 90), sp = +(q.get('s') || 0);
-  for (let i = 0; i < n; i++) animateTeammate(t, 1 / 60, { speed: sp, crouch: !!q.get('c'), alive: q.get('dead') ? false : true, fl: true, pitch: +(q.get('p') || 0) });
+  for (let i = 0; i < n; i++) animateTeammate(t, 1 / 60, { speed: sp, crouch: !!q.get('c'), alive: q.get('dead') ? false : true, fl: true, pitch: +(q.get('p') || 0), fear: +(q.get('fear') || 0) });
   cam.position.set(+(q.get('cx') || 0), +(q.get('cy') || 1.2), +(q.get('cz') || 3.6)); cam.lookAt(+(q.get('lx') || 0), +(q.get('ly') || 0.95), +(q.get('lz') || 0));
   if (q.get('fov')) { cam.fov = +q.get('fov'); cam.updateProjectionMatrix(); }
   // v5: ?lod=lo força o nível baixo; &mfl=1 acende a luz da lanterna do próprio boneco; &room=1 paredes de um cômodo

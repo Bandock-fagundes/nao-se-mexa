@@ -7,7 +7,7 @@ fs.mkdirSync(out, { recursive: true });
 const srv = await createGameServer({ port: 0 });
 const b = await launch();
 for (const [name, qs] of process.argv.slice(2).map(a => [a.slice(0, a.indexOf('=')), a.slice(a.indexOf('=') + 1)])) {
-  const pg = await b.newPage(); pg.on('pageerror', e => console.log('ERR', e.message)); pg.on('console', m => (m.type() === 'error' || m.text().startsWith('grab')) && console.log('C', m.text()));
+  const pg = await b.newPage(); pg.on('pageerror', e => console.log('ERR', e.message, (e.stack || '').split('\n').slice(0, 4).join(' | '))); pg.on('console', m => (m.type() === 'error' || m.text().startsWith('grab')) && console.log('C', m.text()));
   await pg.setViewport({ width: 1280, height: 720 });
   await pg.goto(`http://localhost:${srv.port}/lab.html?${decodeURIComponent(qs)}`);
   await pg.waitForFunction('window.__done', { timeout: 120000 }).catch(e => console.log('timeout'));

@@ -717,7 +717,9 @@ export class CreatureAnimator {
     // (como patas dianteiras), cabeça travada à frente, tronco dando guinadas
     P.spine1.x += rf * 0.55; P.spine2.x += rf * 0.2; P.spine3.x += rf * 0.12; P.chest.x += rf * 0.04;
     P.neck.x -= rf * 0.5; P.neck2.x -= rf * 0.22; P.head.x -= rf * 0.3;
-    const reachL = 1.85 - 0.6 * cL, reachR = 1.85 + 0.6 * cL; // (o tronco já está ~80° à frente)          // braço oposto à perna da frente estende
+    // (o tronco já está ~80° à frente). s.free = espaço livre à frente: perto de parede os braços se recolhem
+    this.freeK = (this.freeK ?? 1) + (smooth(0.75, 1.5, s.free ?? 1.6) - (this.freeK ?? 1)) * Math.min(1, dt * 8);
+    const fk = this.freeK, reachL = lerp(1.25, 1.85 - 0.6 * cL, fk), reachR = lerp(1.25, 1.85 + 0.6 * cL, fk);          // braço oposto à perna da frente estende
     P.upperArmL.x -= rf * reachL; P.upperArmR.x -= rf * reachR;
     P.upperArmL.z -= rf * 0.38; P.upperArmR.z += rf * 0.38;
     P.forearmL.x -= rf * (0.15 + 0.75 * Math.max(0, cL)); P.forearmR.x -= rf * (0.15 + 0.75 * Math.max(0, -cL));
