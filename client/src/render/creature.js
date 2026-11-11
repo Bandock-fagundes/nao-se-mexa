@@ -513,6 +513,7 @@ function springStep(st, target, omega, zeta, dt) {
 }
 // parâmetros (ω rad/s, ζ) por osso — ζ < 1 dá leve oscilação orgânica
 const SPR = {
+  kidHead: [9, 0.38], kid: [6.5, 0.3], neck2: [8.5, 0.45], spine3: [9.5, 0.48],
   hips: [13, 0.8], spine1: [10, 0.55], spine2: [9.5, 0.5], chest: [9, 0.5], neck: [9, 0.7], head: [11, 0.72],
   jaw: [16, 0.55], clav: [11, 0.65], upperArm: [8.5, 0.55], forearm: [8, 0.5], hand: [10, 0.42], fing: [13, 0.5], thumb: [13, 0.5],
 };
@@ -523,6 +524,15 @@ const sprOf = (name) => {
   return [10, 0.7];
 };
 const LEG = /^(thigh|shin|foot|toes)/;
+// v9: grupos de juntas que "engasgam" juntas (congelam e depois estalam até a pose)
+const HITCH_GROUPS = {
+  head: ['neck', 'neck2', 'head'],
+  armL: ['clavL', 'upperArmL', 'forearmL', 'handL'],
+  armR: ['clavR', 'upperArmR', 'forearmR', 'handR'],
+  torso: ['spine1', 'spine2', 'spine3', 'chest', 'neck', 'neck2', 'head'],
+  kids: ['kidA1', 'kidA2', 'kidA3', 'kidB1', 'kidB2', 'kidB3', 'kidHeadA', 'kidHeadB'],
+};
+const CRACK_BONES = { head: ['neck2', 'neck', 'head'], armL: ['clavL', 'upperArmL', 'handL'], armR: ['clavR', 'upperArmR', 'handR'], torso: ['spine2', 'spine3', 'neck2'], kids: ['kidA1', 'kidB2', 'kidHeadB'] };
 // estados que se misturam por peso (crossfade ~0,3 s)
 const LAYERS = ['hear', 'turn', 'stop', 'sniff', 'inspect', 'look', 'attack', 'kill', 'door', 'recover', 'investigate_walk', 'run'];
 // pernas: comprimentos e ângulos de repouso no plano sagital (ψ = ângulo a partir da vertical para baixo, + para frente)
@@ -546,7 +556,12 @@ export class CreatureAnimator {
     this.feet = { L: this.newFoot(1), R: this.newFoot(-1) };
     this.q = new THREE.Quaternion(); this.e = new THREE.Euler(); this.m4 = new THREE.Matrix4(); this.tmp = V(0, 0, 0); this.tmp2 = V(0, 0, 0);
     this.idleStepCd = 0;
+    // v9: engasgos/estalos, inclinação da cabeça, sobressaltos da corrida; evCb(tipo, dados) → sons
+    this.evCb = null; this.hitch = null; this.hitchCd = 1.2; this.snapT = 0; this.snapSet = null;
+    this.tilt = 0.18; this.tiltT = 2.5; this.lurchCd = 0.6; this.hearSide = 1; this.sniffN = -1; this.seed = 0;
   }
+  rnd() { this.seed = (this.seed + 0.6180339887) % 1; return hash3(this.t * 3.7, this.seed * 97.1, 5.3); }
+  emit(type, data) { if (this.evCb && !this.first) try { this.evCb(type, data || {}); } catch { } }
   newFoot(s) { return { s, x: s * 0.22, z: 0.12, y: BALL_Y, planted: true, sw: null, psi: PSI_F, toe: PSI_TOE, prevF: 0 }; }
   restFoot(f) { return { x: f.s * 0.21, z: 0.1 }; }
   // s: {anim, animT, speed, headYaw, headPitch, yaw, duck, vx, vz, turn}
@@ -598,7 +613,7 @@ export class CreatureAnimator {
     const rf = smooth(2.2, 3.8, v);           // fator de corrida (pela velocidade real)
     const inv = W('investigate_walk');
     const gw = smooth(0.12, 0.8, v);          // peso da locomoção
-    const stride = (1.25 + 0.42 * v) * (1 - 0.15 * inv);
+    const stride = lerp(1.25 + 0.42 * v, 0.95 + 0.3 * v, rf) * (1 - 0.15 * inv); // v9: corrida de passadas curtas e rápidas
     const duty = lerp(0.62, 0.38, rf);
     const lift = lerp(0.13, 0.3, rf) * (1 - 0.35 * inv) * (0.4 + 0.6 * gw);
     const zc = lerp(0.12, 0.3, rf);
@@ -627,7 +642,7 @@ export class CreatureAnimator {
           const tgt = V(f.s * lerp(0.21, 0.15, rf) + this.vel.x * duty * T * 0.5, BALL_Y, zc + S * 0.5);
           const rot = this.yawRate * duty * T * 0.5; // antecipa o giro
           const tx = tgt.x * Math.cos(rot) + tgt.z * Math.sin(rot), tz = -tgt.x * Math.sin(rot) + tgt.z * Math.cos(rot);
-          this.liftFoot(f, tx, tz, dur, lift, rf);
+          this.liftFoot(f, tx, tz, dur * (k === 'R' ? 1.06 : 0.96), lift * (k === 'L' ? 1.2 : 0.82), rf);
         }
       }
       f.prevF = fr;
@@ -644,15 +659,18 @@ export class CreatureAnimator {
       const f = this.feet[k];
       if (!f.sw) continue;
       const w = f.sw; w.u = Math.min(1, w.u + dt / w.dur);
-      const u = w.u, u2 = u * u, u3 = u2 * u;
-      const h00 = 2 * u3 - 3 * u2 + 1, h10 = u3 - 2 * u2 + u, h01 = -2 * u3 + 3 * u2, h11 = u3 - u2;
+      const u = w.u;
       const mz = -this.vel.z * w.dur * 0.45, mx = -this.vel.x * w.dur * 0.45;
-      f.z = h00 * w.z0 + h10 * mz + h01 * w.z1 + h11 * mz;
-      f.x = h00 * w.x0 + h10 * mx + h01 * w.x1 + h11 * mx;
-      f.y = BALL_Y + w.h * Math.pow(Math.sin(Math.PI * Math.pow(u, 0.85)), 1.0);
+      // v9 (espreita): no andar o pé sobe rápido, paira e só então avança e desce seco
+      const ue = lerp(smooth(0.12, 0.92, u), u, w.run), e2 = ue * ue, e3 = e2 * ue;
+      const g00 = 2 * e3 - 3 * e2 + 1, g10 = e3 - 2 * e2 + ue, g01 = -2 * e3 + 3 * e2, g11 = e3 - e2;
+      f.z = g00 * w.z0 + g10 * mz + g01 * w.z1 + g11 * mz;
+      f.x = g00 * w.x0 + g10 * mx + g01 * w.x1 + g11 * mx;
+      const hover = smooth(0, 0.3, u) * (1 - smooth(0.8, 1, u)) * 1.05;
+      f.y = BALL_Y + w.h * lerp(hover, Math.sin(Math.PI * Math.pow(u, 0.85)), w.run);
       f.psi = lerp(w.psi0, PSI_F + 0.18, u) - (0.55 + w.run * 0.3) * Math.sin(Math.PI * u);
       f.toe = PSI_TOE - (0.7 + w.run * 0.3) * Math.sin(Math.PI * Math.min(1, u * 1.15));
-      if (u >= 1) { f.sw = null; f.planted = true; f.y = BALL_Y; if (!this.first && w.dur > 0.2) this.impact = 1; if (this.footCb && !this.first) this.footCb(f.s > 0 ? 'L' : 'R', w.run); }
+      if (u >= 1) { f.sw = null; f.planted = true; f.y = BALL_Y; if (!this.first && w.dur > 0.2) this.impact = 1; if (this.footCb && !this.first) this.footCb(f.s > 0 ? 'L' : 'R', w.run); this.emit('step', { foot: f.s > 0 ? 'L' : 'R', run: w.run }); }
     }
     for (const k of ['L', 'R']) {
       const f = this.feet[k];
@@ -684,19 +702,45 @@ export class CreatureAnimator {
     P.spine1.y = cL * 0.04 * gw; P.spine2.y = cL * 0.08 * gw; P.chest.y = cL * lerp(0.1, 0.16, rf) * gw;
     P.spine1.z = -sideSw * 0.04 * gw; P.chest.z = -sideSw * 0.05 * gw; P.neck.z = sideSw * 0.05 * gw; // ondulação da coluna
     P.neck.y = -cL * 0.06 * gw; // a cabeça se estabiliza contra a torção do tronco
-    // braços opostos às pernas
-    const armA = lerp(0.32, 0.95, rf) * gw * (1 - 0.4 * inv);
-    P.upperArmL.x += cL * armA; P.upperArmR.x -= cL * armA;
-    P.forearmL.x -= Math.max(0, -cL) * lerp(0.3, 0.6, rf) * gw; P.forearmR.x -= Math.max(0, cL) * lerp(0.3, 0.6, rf) * gw;
-    P.handL.x += Math.sin(ph) * 0.18 * gw; P.handR.x -= Math.sin(ph) * 0.18 * gw;
-    // corrida: curvada, investindo, braços bombeando
-    P.spine1.x += rf * 0.42; P.spine2.x += rf * 0.16; P.chest.x += rf * 0.04; P.neck.x -= rf * 0.38; P.head.x -= rf * 0.22;
-    P.forearmL.x -= rf * 0.75; P.forearmR.x -= rf * 0.75; P.upperArmL.z -= rf * 0.22; P.upperArmR.z += rf * 0.22;
-    P.spine1.x += mid * 0.05 * rf; // investida a cada passada
+    // v9: ASSIMETRIA — ombro esquerdo caído e braço mais solto; direito mais dobrado, junto do corpo
+    P.clavL.z -= 0.08; P.upperArmL.z -= 0.05; P.upperArmL.x += 0.05; P.forearmR.x -= 0.28; P.handR.x -= 0.12; P.clavR.z += 0.03;
+    // v9: ESPREITA (andar) — quadril baixo, tronco projetado, cabeça baixa à frente e estável; braços pendem à frente
+    const stalk = gw * (1 - rf);
+    hip.y -= 0.1 * stalk; P.spine1.x += 0.12 * stalk; P.spine2.x += 0.05 * stalk; P.neck.x -= 0.08 * stalk; P.head.x -= 0.04 * stalk;
+    P.upperArmL.x -= 0.22 * stalk; P.upperArmR.x -= 0.16 * stalk;
+    // braços opostos às pernas (andar); na corrida viram "patas" que agarram à frente
+    const armA = 0.34 * gw * (1 - rf) * (1 - 0.4 * inv);
+    P.upperArmL.x += cL * armA; P.upperArmR.x -= cL * armA * 0.7;
+    P.forearmL.x -= Math.max(0, -cL) * 0.32 * gw * (1 - rf); P.forearmR.x -= Math.max(0, cL) * 0.25 * gw * (1 - rf);
+    P.handL.x += Math.sin(ph) * 0.18 * gw; P.handR.x -= Math.sin(ph) * 0.14 * gw;
+    // v9: CORRIDA DE ARANHA — tronco quase na horizontal, braços abertos alcançando à frente alternados
+    // (como patas dianteiras), cabeça travada à frente, tronco dando guinadas
+    P.spine1.x += rf * 0.55; P.spine2.x += rf * 0.2; P.spine3.x += rf * 0.12; P.chest.x += rf * 0.04;
+    P.neck.x -= rf * 0.5; P.neck2.x -= rf * 0.22; P.head.x -= rf * 0.3;
+    const reachL = 1.85 - 0.6 * cL, reachR = 1.85 + 0.6 * cL; // (o tronco já está ~80° à frente)          // braço oposto à perna da frente estende
+    P.upperArmL.x -= rf * reachL; P.upperArmR.x -= rf * reachR;
+    P.upperArmL.z -= rf * 0.38; P.upperArmR.z += rf * 0.38;
+    P.forearmL.x -= rf * (0.15 + 0.75 * Math.max(0, cL)); P.forearmR.x -= rf * (0.15 + 0.75 * Math.max(0, -cL));
+    P.handL.x += rf * (0.35 - 0.3 * Math.max(0, cL)); P.handR.x += rf * (0.35 - 0.3 * Math.max(0, -cL));
+    P.spine1.x += mid * 0.06 * rf; // investida a cada passada
+    P.spine1.z += rf * 0.1 * Math.sin(ph); P.spine3.z += rf * 0.09 * Math.sin(ph - 1.1); P.chest.y += rf * 0.12 * Math.cos(ph - 0.6);
+    P.hips.z += rf * 0.06 * Math.sin(ph + 0.4);
+    // guinadas aleatórias do tronco na corrida
+    this.lurchCd -= dt;
+    if (rf > 0.5 && this.lurchCd <= 0) {
+      this.lurchCd = 0.4 + this.rnd() * 0.7; const sg = this.rnd() < 0.5 ? -1 : 1;
+      this.spr.spine2.z.v += sg * (2.2 + this.rnd() * 2); this.spr.chest.y.v -= sg * (1.5 + this.rnd() * 2); this.spr.spine1.x.v += 1.5 * this.rnd();
+    }
+    // v9: onda que sobe pela coluna, vértebra por vértebra (andar e parado)
+    { const wv = 0.035 * gw * (1 - rf * 0.5) + 0.018 * (1 - gw), wp = ph * (gw > 0.3 ? 1 : 0) + t * 0.9 * (1 - gw);
+      const SP = ['spine1', 'spine2', 'spine3', 'chest', 'neck', 'neck2'];
+      for (let i = 0; i < SP.length; i++) { P[SP[i]].z += wv * Math.sin(wp - i * 0.75); P[SP[i]].y += wv * 0.8 * Math.sin(wp * 0.5 - i * 0.6); } }
+    // v9: parada — transfere o peso de uma perna para a outra, devagar
+    { const iw = 1 - gw; hip.x += Math.sin(t * 0.37) * 0.035 * iw; P.hips.z += Math.sin(t * 0.37) * 0.05 * iw; P.spine1.z -= Math.sin(t * 0.37) * 0.035 * iw; }
     // ---------- respiração (caixa torácica e ombros) ----------
     const brRate = lerp(0.85, 2.1, Math.max(rf, W('recover') * 0.9, W('kill') * 0.7));
     this.brPh = (this.brPh || 0) + dt * brRate * Math.PI * 2;
-    const br = Math.sin(this.brPh), brAmp = lerp(1, 1.8, Math.max(rf, W('recover')));
+    const br = Math.sin(this.brPh), brAmp = lerp(1, 1.8, Math.max(rf, W('recover'))) * (1 - 0.85 * W('hear')); // v9: prende a respiração ao escutar
     P.chest.x -= br * 0.03 * brAmp; P.spine2.x -= br * 0.012 * brAmp; P.clavL.z -= br * 0.03 * brAmp; P.clavR.z += br * 0.03 * brAmp; P.neck.x += br * 0.02 * brAmp;
     const chestScale = 1 + (br * 0.5 + 0.5) * 0.035 * brAmp;
     // ---------- cabeça: lidera, varre devagar, espasmos ----------
@@ -708,6 +752,12 @@ export class CreatureAnimator {
     P.neck.y += hy * 0.4 + scanY * 0.4 + lead * 0.45; P.head.y += hy * 0.6 + scanY * 0.6 + lead * 0.55;
     P.neck.x += -hp * 0.5 + scanP * 0.4; P.head.x += -hp * 0.5 + scanP * 0.6;
     P.head.z += n1(t * 0.31, 4) * 0.08 * scanW;
+    // v9: cabeça TORTA — inclinação que muda de repente (estala) e, parada, rola devagar até ângulos impossíveis
+    this.tiltT -= dt;
+    if (this.tiltT <= 0) { this.tiltT = 2 + this.rnd() * 4.5; const r0 = this.rnd(); this.tilt = (r0 < 0.5 ? -1 : 1) * (0.12 + 0.38 * this.rnd()); this.spr.head.z.v += Math.sign(this.tilt) * 4; if (r0 > 0.7) this.emit('crack', { bone: 'neck2', k: 0.45 }); }
+    const idleW = (1 - gw) * (1 - W('attack')) * (1 - W('kill'));
+    P.head.z += this.tilt * (1 - rf * 0.7) + n1(t * 0.11, 21) * 0.4 * idleW;
+    P.neck2.z -= this.tilt * 0.35 * (1 - rf * 0.7); P.neck2.x += 0.08 * idleW * Math.max(0, n1(t * 0.09, 22));
     P.spine2.y += hy * 0.12 + lead * 0.3; P.chest.y += hy * 0.08 + lead * 0.2;
     // espasmos ocasionais (impulsos de velocidade nas molas)
     this.twitchT -= dt;
@@ -735,11 +785,17 @@ export class CreatureAnimator {
       const sn = Math.max(0, Math.sin(t * 7.5)) * (Math.sin(t * 0.9) > 0.3 ? 1 : 0); P.head.x -= sn * 0.04 * w; // fungadas curtas
     }
     if ((w = W('hear'))) {
+      // v9: ESCUTAR — congela, prende a respiração, a cabeça tomba de lado (ouvido para o som) e o pescoço estica;
+      // os dedos abrem e tremem
       const at = lt.hear, k = smooth(0, 0.12, at);
+      if (Math.abs(hy) > 0.05) this.hearSide = Math.sign(hy);
+      const sd = this.hearSide;
       P.clavL.z -= 0.18 * k * w; P.clavR.z += 0.18 * k * w; P.spine1.x -= 0.08 * k * w; P.neck.x -= 0.12 * w;
-      P.head.z += 0.22 * Math.sin(clamp(at * 2.5, 0, 1) * Math.PI) * w;
-      P.upperArmL.z -= 0.12 * w; P.upperArmR.z += 0.12 * w; curl -= 0.35 * w;
-      jaw += (at < 0.7 ? 0.16 * Math.abs(Math.sin(t * 30)) : 0.04) * w;
+      P.neck2.y += 0.3 * sd * k * w; P.neck2.x -= 0.15 * k * w;
+      P.head.z += (0.62 * sd * k + 0.12 * Math.sin(clamp(at * 2.5, 0, 1) * Math.PI)) * w - this.tilt * 0.8 * w;
+      P.upperArmL.z -= 0.12 * w; P.upperArmR.z += 0.12 * w; P.upperArmL.x -= 0.15 * w; P.upperArmR.x -= 0.15 * w; curl -= 0.45 * w;
+      for (const kk of ['L', 'R']) for (let f = 0; f < 4; f++) P['f' + f + 'a' + kk].x += n1(t * 14 + f, kk === 'L' ? 31 : 32) * 0.12 * w;
+      jaw += (at < 0.7 ? 0.16 * Math.abs(Math.sin(t * 30)) : 0.03) * w;
     }
     if ((w = W('turn'))) {
       P.clavL.z -= 0.12 * w; P.clavR.z += 0.12 * w; P.spine1.x += 0.1 * w; hip.y -= 0.06 * w; curl -= 0.25 * w;
@@ -747,12 +803,17 @@ export class CreatureAnimator {
     }
     if ((w = W('stop'))) { hip.y -= 0.05 * w; curl += 0.15 * w; }
     if ((w = W('sniff'))) {
-      const per = 0.4, k = (lt.sniff % per) / per, cnt = Math.floor(lt.sniff / per) % 5;
+      // v9: FAREJAR — curva-se até o chão, focinho a ~1 m do piso varrendo de um lado para o outro, fungadas em
+      // rajadas de 3 (cada uma puxa a cabeça e o peito), dedos tocando o chão
+      const per = 0.36, k = (lt.sniff % per) / per, n = Math.floor(lt.sniff / per), cnt = n % 5;
       const jerk = cnt < 3 && k < 0.3 ? Math.sin(k / 0.3 * Math.PI) : 0;
-      P.spine1.x += 0.12 * w; P.neck.x -= (0.28 + jerk * 0.1) * w; P.head.x -= (0.32 + jerk * 0.12) * w; // ergue o focinho
-      P.chest.x -= jerk * 0.05 * w; P.clavL.z -= jerk * 0.04 * w; P.clavR.z += jerk * 0.04 * w;
-      P.head.y += n1(t * 0.6, 8) * 0.3 * w; jaw += (0.04 + jerk * 0.06) * w;
-      P.upperArmL.x -= 0.12 * w; P.upperArmR.x -= 0.12 * w;
+      if (cnt < 3 && n !== this.sniffN && w > 0.5) { this.sniffN = n; this.emit('sniff', { k: cnt === 0 ? 1 : 0.7 }); }
+      hip.y -= 0.32 * w; P.spine1.x += 0.42 * w; P.spine2.x += 0.22 * w; P.spine3.x += 0.12 * w; P.neck.x += 0.05 * w;
+      P.neck2.x -= jerk * 0.12 * w; P.head.x += (0.1 - jerk * 0.1) * w;
+      P.chest.x -= jerk * 0.05 * w; P.clavL.z -= jerk * 0.05 * w; P.clavR.z += jerk * 0.05 * w;
+      P.neck.y += n1(t * 0.5, 8) * 0.35 * w; P.head.y += n1(t * 0.5 + 0.3, 8) * 0.35 * w;
+      jaw += (0.02 + jerk * 0.05) * w;
+      P.upperArmL.x -= 0.55 * w; P.upperArmR.x -= 0.5 * w; P.forearmL.x -= 0.25 * w; P.forearmR.x -= 0.1 * w; curl += 0.25 * w;
     }
     if ((w = W('inspect'))) {
       P.spine1.x += 0.42 * w; P.spine2.x += 0.22 * w; P.neck.x += 0.12 * w; P.head.z += 0.25 * w; hip.y -= 0.18 * w;
@@ -795,7 +856,8 @@ export class CreatureAnimator {
       P.upperArmL.x -= 1.1 * hw; P.upperArmR.x -= 1.1 * hw; P.forearmL.x -= 0.6 * hw; P.forearmR.x -= 0.6 * hw;
       hip.y -= 0.42 * hw; hip.z += 0.1 * hw; curl += 0.9 * hw;
       jaw += (0.2 + 0.2 * Math.abs(Math.sin(t * 5))) * hw;
-    }
+      this.kidReach = Math.max(hold, hw * 0.6) * w; // v9: as mãozinhas também agarram
+    } else this.kidReach = 0;
     if ((w = W('door'))) { P.upperArmR.x -= 1.45 * w; P.forearmR.x -= 0.15 * w; P.spine1.x += 0.25 * w; curl -= 0.25 * w; P.handR.x -= 0.4 * w; }
     if ((w = W('recover'))) { P.neck.x += 0.22 * w; P.spine1.x += 0.12 * w; hip.y -= 0.04 * w; jaw += (0.12 + 0.08 * Math.sin(this.brPh)) * w; }
     // inércia da parada repentina (sobressalto amortecido)
@@ -819,6 +881,48 @@ export class CreatureAnimator {
       }
       P['thumb' + k].z = -sg * (curl * 0.6 + 0.1); P['thumb' + k].x = -0.15;
     }
+    // ---------- v9: FILHAS — braços que se contorcem devagar, agarram na perseguição/no agarrão; rostos tremem ----------
+    { const chase = Math.max(rf, W('attack')), kr = this.kidReach || 0, alive = 1 - 0.6 * W('hear');
+      const wr = (sd, sp) => n1(t * sp, sd) * alive;
+      // A (peito/flanco esquerdo, a que aceitou): mais lenta, como se acariciasse; B (costas, a que resistiu): empurra para fora
+      P.kidA1.x = wr(41, 0.35) * 0.3 - 0.5 * chase - 0.6 * rf - 0.7 * kr; P.kidA1.y = wr(42, 0.3) * 0.35; P.kidA1.z = wr(43, 0.28) * 0.25;
+      P.kidA2.x = -0.35 + wr(44, 0.5) * 0.35 - 0.2 * chase; P.kidA2.z = wr(45, 0.4) * 0.2;
+      P.kidA3.x = -0.4 + wr(46, 0.8) * 0.4 + 0.5 * kr; P.kidA3.z = wr(47, 0.7) * 0.3;
+      P.kidB1.x = wr(51, 0.55) * 0.45 - 1.0 * rf; P.kidB1.y = wr(52, 0.5) * 0.5; P.kidB1.z = wr(53, 0.45) * 0.4 - 0.25 * chase;
+      P.kidB2.x = 0.3 + wr(54, 0.9) * 0.5; P.kidB2.z = wr(55, 0.8) * 0.3;
+      P.kidB3.x = 0.3 + wr(56, 1.4) * 0.5 + 0.5 * Math.max(0, Math.sin(t * 9)) * chase; P.kidB3.z = wr(57, 1.1) * 0.4;
+      P.kidHeadA.y = n1(t * 0.2, 61) * 0.12; P.kidHeadA.z = n1(t * 0.17, 62) * 0.1;
+      P.kidHeadB.x = n1(t * 11, 63) * 0.035 * (0.4 + chase); P.kidHeadB.y = n1(t * 0.6, 64) * 0.18 + n1(t * 13, 65) * 0.03;
+      // parado, os dedos da mãe tamborilam devagar, um de cada vez
+      for (const kk of ['L', 'R']) for (let f = 0; f < 4; f++) P['f' + f + 'b' + kk].z += (kk === 'L' ? -1 : 1) * 0.35 * idleW * Math.max(0, Math.sin(t * 5.5 - f * 0.9)) * (n1(t * 0.25, kk === 'L' ? 71 : 72) > 0.15 ? 1 : 0); }
+    // v9: coluna e pescoço segmentados — a curvatura se espalha pelos segmentos novos
+    for (const a of ['x', 'y', 'z']) { P.spine3[a] += P.spine2[a] * 0.4; P.spine2[a] *= 0.7; P.neck2[a] += P.neck[a] * 0.45; P.neck[a] *= 0.7; }
+    // dedos: 3ª falange acompanha a 2ª
+    for (const kk of ['L', 'R']) for (let f = 0; f < 4; f++) { P['f' + f + 'c' + kk].z = P['f' + f + 'b' + kk].z * 0.75; }
+    // ---------- v9: ENGASGO — um grupo de juntas congela por um instante e depois ESTALA até a pose (às vezes
+    // com um estalo de osso). Movimento travado-depois-liso, nada natural. ----------
+    const busy = Math.max(W('attack'), W('kill'), W('door'));
+    this.hitchCd -= dt * (1 - busy);
+    if (!this.hitch && this.hitchCd <= 0 && !this.first) {
+      const r0 = this.rnd();
+      const g = rf > 0.5 ? (r0 < 0.5 ? 'head' : 'kids') : r0 < 0.3 ? 'head' : r0 < 0.47 ? 'armL' : r0 < 0.6 ? 'armR' : r0 < 0.82 ? 'torso' : 'kids';
+      const hold = {}; for (const n of HITCH_GROUPS[g]) hold[n] = { x: this.spr[n].x.x, y: this.spr[n].y.x, z: this.spr[n].z.x };
+      this.hitch = { g, hold, t: 0, dur: rf > 0.5 ? 0.06 + this.rnd() * 0.08 : 0.1 + this.rnd() * 0.22 };
+    }
+    if (this.hitch) {
+      const H = this.hitch; H.t += dt;
+      if (H.t < H.dur) { for (const n in H.hold) P[n] = H.hold[n]; }
+      else {
+        this.snapSet = HITCH_GROUPS[H.g]; this.snapT = 0.2; this.hitch = null;
+        this.hitchCd = rf > 0.5 ? 1.2 + this.rnd() * 2.5 : gw > 0.3 ? 0.9 + this.rnd() * 2.6 : 0.7 + this.rnd() * 2.2;
+        if (this.rnd() < 0.42) { // estalo: impulso numa junta + som
+          const list = CRACK_BONES[H.g], bn = list[Math.floor(this.rnd() * list.length)], sg = this.rnd() < 0.5 ? -1 : 1;
+          const st = this.spr[bn]; if (st) { st.z.v += sg * (3 + this.rnd() * 3); st.x.v += (this.rnd() - 0.5) * 4; }
+          this.emit('crack', { bone: bn, k: 0.5 + this.rnd() * 0.5 });
+        }
+      }
+    }
+    this.snapT = Math.max(0, this.snapT - dt);
     // ---------- molas → ossos ----------
     if (this.first) for (const n in this.spr) for (const a of ['x', 'y', 'z']) { this.spr[n][a].x = P[n][a]; this.spr[n][a].v = 0; }
     const hearSnap = Math.max(W('hear'), W('turn'));
@@ -826,6 +930,7 @@ export class CreatureAnimator {
       let [om, ze] = sprOf(n);
       if (n === 'head' || n === 'neck') om *= 1 + hearSnap * 1.2; // cabeça "estala" na direção do som
       if (anim === 'attack') om *= 1.6;
+      if (this.snapT > 0 && this.snapSet && this.snapSet.includes(n)) { om *= 2.6; ze *= 0.55; } // estala até a pose
       const st = this.spr[n];
       const x = springStep(st.x, P[n].x, om, ze, dt), y = springStep(st.y, P[n].y, om, ze, dt), z = springStep(st.z, P[n].z, om, ze, dt);
       this.e.set(x, y, z, 'XYZ'); b[n].quaternion.setFromEuler(this.e);

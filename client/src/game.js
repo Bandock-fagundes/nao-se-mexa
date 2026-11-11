@@ -752,7 +752,7 @@ export class Game {
       // v6: o corpo da criatura (cabeça, mãos, ombros) se projeta ~0,9 m à frente da raiz e 0,55 m para os lados;
       // o servidor só colide o centro (raio 0,42). Recuo visual suave para nunca enfiar a cabeça/mãos numa parede,
       // janela ou porta fechada.
-      { const push = this.creatureWallPush(L, c.position.x, c.position.z, c.rotation.y);
+      { const push = this.creatureWallPush(L, c.position.x, c.position.z, c.rotation.y, cb.anim === 'run' ? 1.45 : cb.anim === 'sniff' ? 1.15 : 0.95);
         this.crPush = this.crPush || { x: 0, z: 0 };
         this.crPush.x += (push.x - this.crPush.x) * Math.min(1, dt * 10); this.crPush.z += (push.z - this.crPush.z) * Math.min(1, dt * 10);
         c.position.x += this.crPush.x; c.position.z += this.crPush.z; }
@@ -813,13 +813,14 @@ export class Game {
     for (; si < this.remoteSpots.length; si++) { this.remoteSpots[si].s.intensity = 0; this.remoteSpots[si].c.visible = false; }
   }
   // v6: deslocamento (x,z) que tira as partes salientes da criatura de dentro de paredes/portas fechadas
-  creatureWallPush(L, x, z, yaw) {
+  // v9: reach = até onde as mãos/cabeça se projetam (correndo, os braços vão ~1,45 m à frente)
+  creatureWallPush(L, x, z, yaw, reach = 0.95) {
     const fx = Math.sin(yaw), fz = Math.cos(yaw), rx = Math.cos(yaw), rz = -Math.sin(yaw);
     const solid = (px, pz) => { const cx = cellOf(px), cz = cellOf(pz), t = this.world.cell(L, cx, cz); return t === T.WALL || t === T.VOID || t === T.TALL || ((t === T.DOOR || t === T.EXIT) && this.world.isDoorClosedCell(L, cx, cz)); };
     let back = 0, side = 0;
-    for (let d = 0.95; d >= 0.45; d -= 0.1) for (const o of [0, -0.3, 0.3]) if (solid(x + fx * d + rx * o, z + fz * d + rz * o)) back = Math.max(back, 0.98 - d);
+    for (let d = reach; d >= 0.45; d -= 0.1) for (const o of [0, -0.3, 0.3]) if (solid(x + fx * d + rx * o, z + fz * d + rz * o)) back = Math.max(back, reach + 0.03 - d);
     for (const sg of [-1, 1]) for (let d = 0.6; d >= 0.42; d -= 0.06) if (solid(x + rx * sg * d + fx * 0.25, z + rz * sg * d + fz * 0.25)) { side -= sg * (0.62 - d); break; }
-    back = Math.min(back, 0.5); side = Math.max(-0.2, Math.min(0.2, side));
+    back = Math.min(back, reach > 1 ? 0.9 : 0.5); side = Math.max(-0.2, Math.min(0.2, side));
     return { x: -fx * back + rx * side, z: -fz * back + rz * side };
   }
   // distância (m) até a primeira superfície à frente da câmera — marcha barata pela grade (paredes, móveis
