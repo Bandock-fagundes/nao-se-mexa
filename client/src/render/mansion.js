@@ -367,7 +367,7 @@ export function buildMansion(map, world, M) {
       const p = new THREE.Mesh(new THREE.PlaneGeometry(dc.w, dc.h), new THREE.MeshStandardMaterial({ map: storyPainting(dc.v), color: 0xb4a890, roughness: 0.82 }) /* tinta fosca: de perto a lanterna estourava o quadro */); p.position.z = 0.053; g.add(p);
       if (dc.v % 4 === 1) g.rotation.z = 0.03; // levemente torto (cabe na moldura: a caixa de ocupação já tem folga)
       g.updateMatrixWorld(true);
-      const pi = res.paintings.length; res.paintings.push({ v: dc.v, title: PAINTING_TITLES[dc.v % 8] });
+      const pi = res.paintings.length; res.paintings.push({ v: dc.v, title: PAINTING_TITLES[dc.v % 8], g }); g.userData.painting = true; // v6: g → o trailer esconde os quadros
       res.interact.push({ kind: 'painting', id: pi, level: dc.level, box: new THREE.Box3().setFromObject(g).expandByScalar(0.04) });
     } else if (dc.kind === 'rug' || dc.kind === 'runner') {
       const mat = M.T.carpets[(dc.v || 0) % 3];

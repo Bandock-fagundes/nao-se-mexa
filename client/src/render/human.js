@@ -438,6 +438,21 @@ function solveLegIK(hip, knee, H, A, pole) {
   _m1.makeBasis(Xb, Yb, Zb); hip.quaternion.setFromRotationMatrix(_m1);
   knee.rotation.set(kneeA, 0, 0);
 }
+// IK do braço: o cotovelo aponta para 'pole' (para trás/baixo) e o antebraço dobra para a frente
+const L_UARM = 0.28, L_FARM = 0.27;
+function solveArmIK(sh, el, H, A, pole) {
+  const D = new THREE.Vector3().subVectors(A, H); let d = D.length();
+  d = clamp(d, 0.08, (L_UARM + L_FARM) * 0.999); const dh = D.normalize();
+  const p = pole.clone().addScaledVector(dh, -pole.dot(dh)); if (p.lengthSq() < 1e-8) p.set(0, -1, -1); p.normalize();
+  const al = Math.acos(clamp((L_UARM * L_UARM + d * d - L_FARM * L_FARM) / (2 * L_UARM * d), -1, 1));
+  const bend = Math.PI - Math.acos(clamp((L_UARM * L_UARM + L_FARM * L_FARM - d * d) / (2 * L_UARM * L_FARM), -1, 1));
+  const up = new THREE.Vector3().copy(dh).multiplyScalar(Math.cos(al)).addScaledVector(p, Math.sin(al));
+  const Yb = up.clone().negate();
+  const Zb = new THREE.Vector3().copy(p).multiplyScalar(Math.cos(al)).addScaledVector(dh, -Math.sin(al)).normalize().negate();
+  const Xb = new THREE.Vector3().crossVectors(Yb, Zb).normalize();
+  _m1.makeBasis(Xb, Yb, Zb); sh.quaternion.setFromRotationMatrix(_m1);
+  el.rotation.set(-bend, 0, 0);
+}
 // gira 'g' (filho de um pai já atualizado) para que o eixo local 'axis' aponte para o ponto do mundo 'target'
 function aimAt(g, target, axis = NEG_Y) {
   g.parent.updateMatrixWorld(true);
@@ -606,6 +621,19 @@ export function animateTeammate(t, dt, s) {
   P['sh-1'].rotation.z = k('shRz', -0.1, 10, 0.6);
   P['el-1'].rotation.x = k('elR', -0.82 - run * 0.35 + cr * 0.1, 10, 0.55);
   P['wr-1'].rotation.x = k('wrR', -0.1, 10, 0.6);
+  // ---------------- alcançar (abrir porta/gaveta/armário): IK do braço esquerdo até um ponto do mundo ----------------
+  if (s.reach && s.reach.k > 0.001) {
+    root.updateMatrixWorld(true);
+    const sh = P['sh1'], el = P['el1'], clav = P['clav1'];
+    const q0 = sh.quaternion.clone(), e0 = el.quaternion.clone();
+    const A = clav.worldToLocal(s.reach.p.clone());
+    const pole = clav.worldToLocal(new THREE.Vector3().copy(root.position).addScaledVector(fwd, -0.6).add(new THREE.Vector3(0, 0.2, 0)).addScaledVector(right, -0.5)).sub(sh.position);
+    solveArmIK(sh, el, sh.position, A, pole);
+    const kk = clamp(s.reach.k, 0, 1);
+    sh.quaternion.copy(q0.slerp(sh.quaternion.clone(), kk)); el.quaternion.copy(e0.slerp(el.quaternion.clone(), kk));
+    P['wr1'].rotation.x = lerp(P['wr1'].rotation.x, -0.25, kk);
+    t.spine.rotation.y += 0; // o tronco já gira pela cabeça
+  }
   // ---------------- cabeça ----------------
   const twist = t.spine.rotation.y + t.pelvis.rotation.y;
   t.neck.rotation.x = k('nk', -pitch * 0.4 - t.spine.rotation.x * 0.7 - t.pelvis.rotation.x * 0.6, 10, 0.7);

@@ -411,12 +411,13 @@ export class Game {
     if (t < 1.45) {
       // erguido até o rosto dela: 0,55 m à frente da cabeça, um pouco abaixo, tremendo
       const u = Math.min(1, t / 0.45), e = u * u * (3 - 2 * u);
-      const hold = head.clone().addScaledVector(fw, 0.62); hold.y -= 0.12;
+      const hold = head.clone().addScaledVector(fw, 0.6); hold.y -= 0.36;   // um pouco abaixo: ela inclina a cabeça e encara de cima
       pos = new THREE.Vector3(G.x0, G.y0, G.z0).lerp(hold, e);
       const amp = 0.025 + 0.03 * Math.min(1, t);
       pos.x += sh(1) * amp; pos.y += sh(2) * amp; pos.z += sh(3) * amp;
       G.relPos = pos.clone();
-      cam.position.copy(pos); cam.up.set(0, 1, 0); cam.lookAt(head); cam.rotateZ(sh(4) * 0.06);
+      const face = head.clone().addScaledVector(fw, 0.18); face.y -= 0.1;
+      cam.position.copy(pos); cam.up.set(0, 1, 0); cam.lookAt(face); cam.rotateZ(sh(4) * 0.06);
     } else {
       // solto: cai até o chão, rola de lado e fica olhando para cima, para ela
       const u = Math.min(1, (t - 1.45) / 0.55), fall = u * u;
@@ -791,7 +792,7 @@ export class Game {
         from = crp.clone();
       } else m.grabbed = undefined;
       const lv = sp.level, ly = LEVELS[lv] ? LEVELS[lv].y : 0;
-      animateTeammate(v, dt, { speed: m.speed, crouch: sp.crouch, alive: sp.alive, fl: sp.fl, pitch: sp.pitch, headYaw: face.headYaw, grab, from,
+      animateTeammate(v, dt, { speed: m.speed, crouch: sp.crouch, alive: sp.alive, fl: sp.fl, pitch: sp.pitch, headYaw: face.headYaw, grab, from, reach: sp.reach || null,
         ground: (gx, gz) => this.world.floorY(lv, gx, gz),
         solid: (gx, gy, gz) => { const c = this.world.cell(lv, cellOf(gx), cellOf(gz)); if (c === T.LOW) return gy - ly < 0.75; return c !== T.FLOOR && c !== T.STAIR && c !== T.CURTAIN && c !== T.HOLE && !(c === T.DOOR && this.world.doorOpen[this.world.doorAt(lv, cellOf(gx), cellOf(gz))]); } });
       // passos remotos
