@@ -42,6 +42,19 @@
       <div class="panel">
         <h2>Escolha o modo</h2>
         <label class="field">Seu nome <input id="name" maxlength="16" placeholder="Jogador" /></label>
+        <!-- v7: aparência (um acessório + cor); o mesmo bloco é movido entre a seleção de modo e a sala de espera -->
+        <div class="look-slot" id="lookSlotMode">
+          <div class="look-box" id="lookBox">
+            <div class="look-prev"><canvas id="lookCanvas"></canvas><span class="look-drag">arraste para girar</span></div>
+            <div class="look-ctl">
+              <h3>APARÊNCIA</h3>
+              <div class="seg" id="lookAcc"><button data-acc="scarf">Cachecol</button><button data-acc="hat">Chapéu</button></div>
+              <div class="seg look-hat" id="lookHat"><button data-hat="fedora">Fedora de feltro</button><button data-hat="beanie">Gorro de lã</button></div>
+              <div class="swatches" id="lookCols"></div>
+              <p class="hint" id="lookName"></p>
+            </div>
+          </div>
+        </div>
         <p class="hint phase-note">A partida sempre começa na <b>Fase 1 — ele vê</b>. Escapem para chegar à Fase 2 (ele ouve) e à Fase 3 (ele sente seu cheiro).</p>
         <div class="mode-grid">
           <div class="card"><h3>Solo</h3><p>Você sozinho contra a criatura.</p><button id="btnSolo">Começar solo</button></div>
@@ -64,6 +77,7 @@
         <p class="hint" id="shareHint"></p>
         <div class="row between"><h3>Jogadores <span id="lobbyCount"></span></h3><span id="lobbyConn" class="conn ok">● conectado</span></div>
         <ul id="lobbyPlayers" class="players"></ul>
+        <div class="look-slot" id="lookSlotLobby"></div>
         <p class="hint" id="lobbyPhaseInfo">Próxima partida: Fase 1 — ele vê</p>
         <div class="row">
           <button id="btnReady">Estou pronto</button>

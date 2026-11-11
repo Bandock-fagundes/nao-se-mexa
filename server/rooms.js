@@ -2,6 +2,7 @@
 import crypto from 'node:crypto';
 import { Match } from './match.js';
 import { randomSeed } from '../shared/rng.js';
+import { sanitizeLook, defaultLook } from '../shared/look.js';
 import { MAX_PLAYERS, NET, PHASES, SERVER, MAX_PHASE } from '../shared/config.js';
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -38,6 +39,8 @@ export class RoomManager {
     if (!pl) return;
     switch (msg.t) {
       case 'ready': pl.ready = !!msg.ready; this.broadcastRoom(room); break;
+      // v7: aparência (acessório + cor). Pode mudar na sala de espera; durante a partida fica a escolhida no início.
+      case 'look': { const lk = sanitizeLook(msg.look); if (lk && room.state !== 'playing') { pl.look = lk; this.broadcastRoom(room); } break; }
       // v3: escolher a fase é só para a aba TESTAR JOGO; no jogo normal a fase avança sozinha (1 → 2 → 3)
       case 'phase': if (room.test && room.hostId === pid && room.state !== 'playing' && PHASES[msg.phase]) { room.phase = msg.phase; this.broadcastRoom(room); } break;
       case 'loaded': if (room.match && room.state === 'playing') room.match.markLoaded(pid); break;
@@ -83,7 +86,7 @@ export class RoomManager {
   roomInfo(room) {
     return {
       code: room.code, hostId: room.hostId, phase: room.phase, state: room.state, test: room.test, solo: room.solo, nextSeed: room.test ? room.nextSeed : undefined,
-      players: [...room.players.values()].map(p => ({ id: p.id, name: p.name, ready: p.ready, connected: p.connected, isHost: p.id === room.hostId })),
+      players: [...room.players.values()].map(p => ({ id: p.id, name: p.name, ready: p.ready, connected: p.connected, isHost: p.id === room.hostId, slot: p.slot, look: p.look })),
       max: MAX_PLAYERS,
     };
   }
@@ -99,10 +102,12 @@ export class RoomManager {
     }
   }
   broadcastRoom(room) { this.broadcast(room, { t: 'room', room: this.roomInfo(room) }); }
-  addPlayer(room, conn, name) {
+  addPlayer(room, conn, name, look) {
     const id = 'p' + crypto.randomBytes(4).toString('hex');
     const token = crypto.randomBytes(16).toString('hex');
-    const p = { id, name: cleanName(name), token, ready: false, connected: true, conn, dcAt: null };
+    // v7: vaga = menor índice livre na sala (define a cor padrão de quem não escolheu aparência — clientes antigos)
+    const used = new Set([...room.players.values()].map(q => q.slot)); let slot = 0; while (used.has(slot)) slot++;
+    const p = { id, name: cleanName(name), token, ready: false, connected: true, conn, dcAt: null, slot, look: sanitizeLook(look) || defaultLook(slot) };
     room.players.set(id, p);
     conn.room = room; conn.pid = id;
     send(conn.ws, { t: 'joined', code: room.code, id, token, room: this.roomInfo(room) });
@@ -113,7 +118,7 @@ export class RoomManager {
     const code = this.newCode();
     const room = { code, players: new Map(), hostId: null, phase: (msg.test && PHASES[msg.phase]) ? msg.phase : 1, state: 'lobby', test: !!msg.test, solo, match: null, created: Date.now(), nextSeed: msg.seed && msg.test ? String(msg.seed).slice(0, 40) : null, diagAcc: 0, emptySince: null };
     this.rooms.set(code, room);
-    const p = this.addPlayer(room, conn, msg.name);
+    const p = this.addPlayer(room, conn, msg.name, msg.look);
     room.hostId = p.id;
     this.broadcastRoom(room);
     if (solo) this.startMatch(room);
@@ -127,7 +132,7 @@ export class RoomManager {
     const active = [...room.players.values()].filter(p => p.connected || p.dcAt);
     if (active.length >= MAX_PLAYERS) return send(conn.ws, { t: 'error', msg: 'Sala cheia (máximo ' + MAX_PLAYERS + ').' });
     if (conn.room) this.leave(conn);
-    this.addPlayer(room, conn, msg.name);
+    this.addPlayer(room, conn, msg.name, msg.look);
     this.broadcastRoom(room);
   }
   resume(conn, msg) {
@@ -141,12 +146,13 @@ export class RoomManager {
     if (room.match && (room.state === 'playing' || room.state === 'ended')) {
       room.match.setConnected(p.id, true);
       const mp = room.match.players.get(p.id);
-      send(conn.ws, { t: 'start', resumed: true, gen: { ...room.match.gen }, seed: room.match.seed, size: room.match.size, genVersion: room.match.gen.version, mapHash: room.match.map.hash, phase: room.match.phase, keysNeeded: room.match.keysNeeded, you: mp ? { x: mp.x, z: mp.z, level: mp.level, yaw: mp.yaw, alive: mp.alive, escaped: mp.escaped } : null, state: room.match.fullState(), test: room.test, names: this.names(room) });
+      send(conn.ws, { t: 'start', resumed: true, gen: { ...room.match.gen }, seed: room.match.seed, size: room.match.size, genVersion: room.match.gen.version, mapHash: room.match.map.hash, phase: room.match.phase, keysNeeded: room.match.keysNeeded, you: mp ? { x: mp.x, z: mp.z, level: mp.level, yaw: mp.yaw, alive: mp.alive, escaped: mp.escaped } : null, state: room.match.fullState(), test: room.test, names: this.names(room), looks: this.looks(room) });
       if (room.state === 'ended') send(conn.ws, { t: 'end', result: room.match.result, stats: room.match.stats() });
     }
     this.broadcastRoom(room);
   }
   names(room) { return Object.fromEntries([...room.players.values()].map(p => [p.id, p.name])); }
+  looks(room) { return Object.fromEntries([...room.players.values()].map(p => [p.id, p.look])); }
   start(room, pid) {
     if (room.hostId !== pid) return send(room.players.get(pid).conn.ws, { t: 'error', msg: 'Apenas o anfitrião pode iniciar.' });
     if (room.state === 'playing') return;
@@ -169,7 +175,7 @@ export class RoomManager {
     for (const p of room.players.values()) {
       const mp = room.match.players.get(p.id);
       if (!mp) continue;
-      send(p.conn && p.conn.ws, { t: 'start', gen: { ...room.match.gen }, seed: room.match.seed, size: room.match.size, genVersion: room.match.gen.version, mapHash: room.match.map.hash, phase: room.phase, keysNeeded: room.match.keysNeeded, you: { x: mp.x, z: mp.z, level: mp.level, yaw: mp.yaw, alive: true, escaped: false }, state: room.match.fullState(), test: room.test, names: this.names(room) });
+      send(p.conn && p.conn.ws, { t: 'start', gen: { ...room.match.gen }, seed: room.match.seed, size: room.match.size, genVersion: room.match.gen.version, mapHash: room.match.map.hash, phase: room.phase, keysNeeded: room.match.keysNeeded, you: { x: mp.x, z: mp.z, level: mp.level, yaw: mp.yaw, alive: true, escaped: false }, state: room.match.fullState(), test: room.test, names: this.names(room), looks: this.looks(room) });
     }
     this.broadcastRoom(room);
   }

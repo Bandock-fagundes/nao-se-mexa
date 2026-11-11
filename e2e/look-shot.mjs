@@ -1,0 +1,24 @@
+// v7: capturas da tela APARÊNCIA (seleção de modo + sala de espera com a prévia 3D). Uso: node e2e/look-shot.mjs <pasta>
+import fs from 'node:fs';
+import { createGameServer } from '../server/index.js';
+import { launch, sleep, newPage } from './launch.mjs';
+const out = process.argv[2] || 'shots/v7'; fs.mkdirSync(out, { recursive: true });
+const srv = await createGameServer({ port: 0 });
+const b = await launch();
+const pg = await newPage(b, `http://localhost:${srv.port}/?e2e=1&lookprev=1`, console.log, 1280, 860);
+await sleep(1500);
+await pg.evaluate(() => localStorage.setItem('nsm_name', 'Gabriel'));
+await pg.click('[data-go="mode"][data-mode="multi"]');
+await pg.waitForFunction(() => window.__app.lookPrev, { timeout: 60000 });
+const click = (sel) => pg.evaluate((s) => document.querySelector(s).click(), sel);
+await click('#lookAcc button[data-acc="hat"]'); await click('#lookHat button[data-hat="fedora"]'); await click('#lookCols button:nth-child(5)');
+await sleep(2500); await pg.screenshot({ path: `${out}/menu-aparencia-fedora.png` });
+await click('#lookAcc button[data-acc="scarf"]'); await click('#lookCols button:nth-child(2)');
+await sleep(2500); await pg.screenshot({ path: `${out}/menu-aparencia-cachecol.png` });
+await click('#lookAcc button[data-acc="hat"]'); await click('#lookHat button[data-hat="beanie"]'); await click('#lookCols button:nth-child(3)');
+await click('#btnCreate');
+await pg.waitForFunction(() => window.__app.screen === 'lobby', { timeout: 20000 });
+await sleep(2500); await pg.screenshot({ path: `${out}/lobby-aparencia.png` });
+const crop = await pg.$('#lookBox'); if (crop) await crop.screenshot({ path: `${out}/aparencia-box.png` });
+console.log('saved', JSON.stringify(await pg.evaluate(() => ({ look: window.__app.look, room: window.__app.room.players.map(p => p.look) }))));
+await b.close(); await srv.close();

@@ -234,3 +234,21 @@ ul.keys { padding-left: 18px; }
 /* v4: painel de FPS / resolução (F3) */
 #fpsBox { position: fixed; left: 8px; top: 8px; z-index: 60; background: rgba(0, 0, 0, .62); color: #cfe8c0; font: 11px/1.45 ui-monospace, Consolas, monospace; padding: 4px 7px; white-space: pre; pointer-events: none; border-radius: 3px; }
 #fpsBox.hidden { display: none; }
+
+/* v7: APARÊNCIA (acessório + cor) */
+.look-box { display: flex; gap: 16px; align-items: stretch; border: 1px solid var(--line); background: rgba(0, 0, 0, .35); padding: 12px; margin: 10px 0 12px; }
+.look-prev { position: relative; flex: 0 0 210px; height: 250px; background: radial-gradient(ellipse at 50% 40%, rgba(120, 70, 40, .28), rgba(0, 0, 0, .6) 70%); border: 1px solid var(--line); cursor: grab; }
+.look-prev:active { cursor: grabbing; }
+.look-prev canvas { width: 100%; height: 100%; display: block; }
+.look-drag { position: absolute; bottom: 4px; left: 0; right: 0; text-align: center; font-size: 11px; color: var(--dim); opacity: .7; pointer-events: none; }
+.look-ctl { flex: 1; min-width: 0; }
+.look-ctl h3 { margin: 0 0 6px; letter-spacing: 4px; font-size: 15px; color: var(--gold); }
+.look-hat button { font-size: 12px; padding: 7px 8px; }
+.swatches { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 2px 4px; }
+.swatches button { margin: 0; padding: 0; height: 40px; border: 2px solid rgba(232, 220, 200, .18); border-radius: 3px; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .5), inset 0 -8px 14px rgba(0, 0, 0, .35); }
+.swatches button:hover { border-color: rgba(232, 220, 200, .55); }
+.swatches button.on { border-color: var(--gold); box-shadow: 0 0 0 2px rgba(216, 168, 64, .35), inset 0 0 0 1px rgba(0, 0, 0, .5); }
+#lookName { margin: 6px 0 0; }
+.players .look-dot { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin-right: 8px; vertical-align: middle; border: 1px solid rgba(255, 255, 255, .3); }
+.players .look-acc { color: var(--dim); font-size: 12px; margin-left: 6px; }
+@media (max-width: 560px) { .look-box { flex-direction: column; } .look-prev { flex-basis: auto; height: 220px; } }

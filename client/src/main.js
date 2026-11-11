@@ -10,6 +10,7 @@ import { LoadingScreen, nextPaint } from './loading.js';
 import { WakeScene } from './wakeup.js';
 import { generateMansion, validateMap } from '../../shared/mapgen.js';
 import { PHASES, W, D, T, CELL } from '../../shared/config.js';
+import { LOOK_COLORS, ACCESSORY_NAMES, sanitizeLook, defaultLook, lookHex } from '../../shared/look.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -54,6 +55,7 @@ function show(id) {
   updateMusic();
   if (id === 'menu') renderStats();
   if (id === 'settings') fillSettings();
+  if (id === 'mode' || id === 'lobby') mountLook(id);
 }
 // trilha conforme a tela
 function updateMusic() {
@@ -91,19 +93,56 @@ const fmtT = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart
 $('#name').value = localStorage.getItem('nsm_name') || '';
 $('#tName').value = localStorage.getItem('nsm_name') || '';
 const myName = () => { const n = ($('#name').value || $('#tName').value || 'Jogador').trim().slice(0, 16) || 'Jogador'; localStorage.setItem('nsm_name', n); return n; };
+// ---------------- v7: APARÊNCIA (um acessório + cor), salva no navegador e enviada ao entrar na sala ----------------
+// Quem nunca escolheu não manda nada: o servidor dá cachecol na cor da vaga (como antes da v7).
+app.look = (() => { try { return sanitizeLook(JSON.parse(localStorage.getItem('nsm_look') || 'null')); } catch { return null; } })();
+app.lastHat = app.look && app.look.acc !== 'scarf' ? app.look.acc : 'fedora';
+const shownLook = () => app.look || (app.room && (app.room.players.find(p => p.id === app.myId) || {}).look) || { acc: 'scarf', col: LOOK_COLORS[0].hex };
+const lookMsg = () => app.look ? { look: app.look } : {};
+function setLook(l) {
+  app.look = sanitizeLook(l); if (!app.look) return;
+  if (app.look.acc !== 'scarf') app.lastHat = app.look.acc;
+  localStorage.setItem('nsm_look', JSON.stringify(app.look));
+  renderLookUI();
+  if (app.room && app.net.state === 'open' && app.room.state !== 'playing') app.net.send({ t: 'look', look: app.look });
+}
+function renderLookUI() {
+  const l = shownLook();
+  $$('#lookAcc button').forEach(b => b.classList.toggle('on', (b.dataset.acc === 'scarf') === (l.acc === 'scarf')));
+  $('#lookHat').classList.toggle('hidden', l.acc === 'scarf');
+  $$('#lookHat button').forEach(b => b.classList.toggle('on', b.dataset.hat === l.acc));
+  $$('#lookCols button').forEach(b => b.classList.toggle('on', +b.dataset.col === l.col));
+  const c = LOOK_COLORS.find(c => c.hex === l.col);
+  $('#lookName').textContent = `${ACCESSORY_NAMES[l.acc]} · ${c ? c.name : 'cor da vaga'}${app.look ? '' : ' (padrão — escolha a sua)'}`;
+  if (app.lookPrev) app.lookPrev.setLook(l);
+}
+$('#lookCols').innerHTML = LOOK_COLORS.map(c => `<button data-col="${c.hex}" title="${c.name}" aria-label="${c.name}" style="background:${lookHex(c.hex)}"></button>`).join('');
+$$('#lookCols button').forEach(b => b.addEventListener('click', () => setLook({ ...shownLook(), col: +b.dataset.col })));
+$$('#lookAcc button').forEach(b => b.addEventListener('click', () => setLook({ ...shownLook(), acc: b.dataset.acc === 'scarf' ? 'scarf' : app.lastHat })));
+$$('#lookHat button').forEach(b => b.addEventListener('click', () => setLook({ ...shownLook(), acc: b.dataset.hat })));
+function mountLook(id) {
+  const slot = $(id === 'lobby' ? '#lookSlotLobby' : '#lookSlotMode');
+  if (slot && $('#lookBox').parentElement !== slot) slot.appendChild($('#lookBox'));
+  renderLookUI();
+  if (!app.lookPrev && !app.lookPrevLoading && (!isE2E || params.has('lookprev'))) {
+    app.lookPrevLoading = true;
+    import('./lookPreview.js').then(({ LookPreview }) => { try { app.lookPrev = new LookPreview($('#lookCanvas')); app.lookPrev.setLook(shownLook()); app.lookPrev.start(); } catch (e) { console.warn('prévia da aparência indisponível', e); } });
+  }
+}
+renderLookUI();
 function segInit(sel, cb) { $$(sel + ' button').forEach(b => b.addEventListener('click', () => { $$(sel + ' button').forEach(x => x.classList.toggle('on', x === b)); cb(+b.dataset.phase); })); }
 // v3: sem seletor de fase para jogadores (sempre começa na Fase 1 e avança 1 → 2 → 3). Só a aba TESTAR JOGO escolhe.
 segInit('#tPhase', (p) => app.phase = p);
 async function ensureNet() { try { await app.net.connect(); return true; } catch { setErr('Não foi possível conectar ao servidor.'); return false; } }
 function setErr(msg) { const el = app.screen === 'lobby' ? $('#lobbyErr') : app.screen === 'testar' ? $('#tErr') : $('#modeErr'); if (el) el.textContent = msg; else toast(msg, 'warn'); }
-$('#btnSolo').addEventListener('click', async () => { app.audio.init(); if (await ensureNet()) { app.testMode = false; app.phase = 1; app.net.send({ t: 'solo', name: myName() }); show('loading'); } });
-$('#btnCreate').addEventListener('click', async () => { app.audio.init(); if (await ensureNet()) { app.testMode = false; app.phase = 1; app.net.send({ t: 'create', name: myName() }); } });
-$('#btnJoin').addEventListener('click', async () => { app.audio.init(); const c = $('#joinCode').value.trim().toUpperCase(); if (c.length < 5) return setErr('Digite o código de 5 letras.'); if (await ensureNet()) { app.testMode = false; app.net.send({ t: 'join', code: c, name: myName() }); } });
+$('#btnSolo').addEventListener('click', async () => { app.audio.init(); if (await ensureNet()) { app.testMode = false; app.phase = 1; app.net.send({ t: 'solo', name: myName(), ...lookMsg() }); show('loading'); } });
+$('#btnCreate').addEventListener('click', async () => { app.audio.init(); if (await ensureNet()) { app.testMode = false; app.phase = 1; app.net.send({ t: 'create', name: myName(), ...lookMsg() }); } });
+$('#btnJoin').addEventListener('click', async () => { app.audio.init(); const c = $('#joinCode').value.trim().toUpperCase(); if (c.length < 5) return setErr('Digite o código de 5 letras.'); if (await ensureNet()) { app.testMode = false; app.net.send({ t: 'join', code: c, name: myName(), ...lookMsg() }); } });
 // ---------------- TESTAR JOGO ----------------
-$('#tSolo').addEventListener('click', async () => { app.audio.init(); if (await ensureNet()) { app.testMode = true; app.diagOn = $('#tDiag').checked; app.net.send({ t: 'solo', name: myName(), phase: app.phase, test: true, seed: $('#tSeed').value.trim() || undefined }); show('loading'); } });
-$('#tCreate').addEventListener('click', async () => { app.audio.init(); if (await ensureNet()) { app.testMode = true; app.diagOn = $('#tDiag').checked; app.net.send({ t: 'create', name: myName(), phase: app.phase, test: true, seed: $('#tSeed').value.trim() || undefined }); } });
-$('#tJoin').addEventListener('click', async () => { app.audio.init(); const c = $('#tCode').value.trim().toUpperCase(); if (await ensureNet()) { app.testMode = true; app.diagOn = $('#tDiag').checked; app.net.send({ t: 'join', code: c, name: myName() }); } });
-$('#tPlaySeed').addEventListener('click', async () => { app.audio.init(); if (!$('#tSeed').value.trim()) $('#tSeed').value = Math.random().toString(36).slice(2, 10); if (await ensureNet()) { app.testMode = true; app.diagOn = $('#tDiag').checked; app.net.send({ t: 'solo', name: myName(), phase: app.phase, test: true, seed: $('#tSeed').value.trim() }); show('loading'); } });
+$('#tSolo').addEventListener('click', async () => { app.audio.init(); if (await ensureNet()) { app.testMode = true; app.diagOn = $('#tDiag').checked; app.net.send({ t: 'solo', name: myName(), ...lookMsg(), phase: app.phase, test: true, seed: $('#tSeed').value.trim() || undefined }); show('loading'); } });
+$('#tCreate').addEventListener('click', async () => { app.audio.init(); if (await ensureNet()) { app.testMode = true; app.diagOn = $('#tDiag').checked; app.net.send({ t: 'create', name: myName(), ...lookMsg(), phase: app.phase, test: true, seed: $('#tSeed').value.trim() || undefined }); } });
+$('#tJoin').addEventListener('click', async () => { app.audio.init(); const c = $('#tCode').value.trim().toUpperCase(); if (await ensureNet()) { app.testMode = true; app.diagOn = $('#tDiag').checked; app.net.send({ t: 'join', code: c, name: myName(), ...lookMsg() }); } });
+$('#tPlaySeed').addEventListener('click', async () => { app.audio.init(); if (!$('#tSeed').value.trim()) $('#tSeed').value = Math.random().toString(36).slice(2, 10); if (await ensureNet()) { app.testMode = true; app.diagOn = $('#tDiag').checked; app.net.send({ t: 'solo', name: myName(), ...lookMsg(), phase: app.phase, test: true, seed: $('#tSeed').value.trim() }); show('loading'); } });
 $('#tGen').addEventListener('click', () => {
   const seed = $('#tSeed').value.trim() || Math.random().toString(36).slice(2, 10);
   $('#tSeed').value = seed;
@@ -147,10 +186,11 @@ $('#btnStart').addEventListener('click', () => app.net.send({ t: 'start' }));
 $('#btnLeave').addEventListener('click', () => leaveToMenu());
 function renderLobby() {
   const r = app.room; if (!r) return;
+  if (!app.look) renderLookUI(); // aparência padrão da vaga (vinda do servidor)
   $('#lobbyCode').textContent = r.code;
   $('#lobbyCount').textContent = `(${r.players.length}/${r.max})`;
   const isHost = r.hostId === app.myId;
-  $('#lobbyPlayers').innerHTML = r.players.map(p => `<li><span>${esc(p.name)}${p.id === app.myId ? ' (você)' : ''}${p.isHost ? '<span class="tag">anfitrião</span>' : ''}</span><span>${p.connected ? '' : '<span class="tag off">desconectado</span>'}${p.isHost ? '<span class="tag ok">pronto</span>' : p.ready ? '<span class="tag ok">pronto</span>' : '<span class="tag wait">aguardando</span>'}</span></li>`).join('');
+  $('#lobbyPlayers').innerHTML = r.players.map(p => `<li><span>${p.look ? `<i class="look-dot" style="background:${lookHex(p.look.col)}"></i>` : ''}${esc(p.name)}${p.id === app.myId ? ' (você)' : ''}${p.isHost ? '<span class="tag">anfitrião</span>' : ''}${p.look ? `<span class="look-acc">${ACCESSORY_NAMES[p.look.acc] || ''}</span>` : ''}</span><span>${p.connected ? '' : '<span class="tag off">desconectado</span>'}${p.isHost ? '<span class="tag ok">pronto</span>' : p.ready ? '<span class="tag ok">pronto</span>' : '<span class="tag wait">aguardando</span>'}</span></li>`).join('');
   { const ph = PHASES[r.phase] || PHASES[1]; $('#lobbyPhaseInfo').textContent = `Próxima partida: ${ph.wake[0].replace(/\.$/, '')}${r.test ? ' (aba de testes)' : ''}`; }
   const notReady = r.players.filter(p => !p.isHost && p.connected && !p.ready);
   $('#btnStart').style.display = isHost ? '' : 'none';

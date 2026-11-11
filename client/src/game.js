@@ -37,7 +37,7 @@ export class Game {
   constructor(app, msg) {
     this.app = app; this.R = app.renderer; this.net = app.net; this.audio = app.audio; this.ui = app.ui;
     this.myId = app.myId; this.test = !!msg.test;
-    this.seed = msg.seed; this.phase = msg.phase; this.keysNeeded = msg.keysNeeded; this.names = msg.names || {};
+    this.seed = msg.seed; this.phase = msg.phase; this.keysNeeded = msg.keysNeeded; this.names = msg.names || {}; this.looks = msg.looks || {};
     // v3: gera EXATAMENTE com os parâmetros que o servidor usou (msg.gen), sem padrões do cliente
     this.gen = msg.gen || (msg.state && msg.state.gen);
     if (!this.gen) throw new Error('o servidor não mandou os parâmetros do mapa (versões diferentes). Recarregue a página.');
@@ -123,7 +123,7 @@ export class Game {
     for (const sp of m.players) {
       if (sp.id === this.myId) continue;
       if (!this.mates.has(sp.id)) {
-        const v = buildTeammate(this.app.M, this.mates.size + 1);
+        const v = buildTeammate(this.app.M, this.mates.size + 1, this.looks[sp.id] || null); // v7: aparência escolhida (sem ela: cachecol na cor da vaga)
         this.R.scene.add(v.root);
         this.mates.set(sp.id, { v, last: sp, stepAcc: 0, px: sp.x, pz: sp.z, rx: sp.x, rz: sp.z, speed: 0 });
       }

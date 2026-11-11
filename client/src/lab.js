@@ -5,6 +5,8 @@ import { buildCreature } from './render/creature.js';
 import { buildHand, HandAnimator } from './render/hand.js';
 import { buildProp, buildKey } from './render/props.js';
 import { buildTeammate, animateTeammate, setTeammateLOD, teammateTriangles, attachTeammateFlashlight } from './render/human.js';
+import { sanitizeLook } from '../../shared/look.js';
+import { accessoryTriangles } from './render/accessories.js';
 const q = new URLSearchParams(location.search);
 const view = q.get('v') || 'creature';
 const W = 1280, H = 720;
@@ -80,15 +82,29 @@ if (view === 'creature') {
   }
   cam.position.set(+(q.get('cx') || 0), +(q.get('cy') || 1.0), +(q.get('cz') || 4.6)); cam.lookAt(+(q.get('lx') || 0), +(q.get('ly') || 0.8), 0);
   if (q.get('fov')) { cam.fov = +q.get('fov'); cam.updateProjectionMatrix(); }
+} else if (view === 'clip') {
+  // prévia em vídeo: bonecos andando/correndo; câmera acompanha de lado. window.__frame() avança 1/30 s e renderiza.
+  { const g = new THREE.PlaneGeometry(60, 10); const uv = g.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) * 6); g.setAttribute('color', new THREE.Float32BufferAttribute(new Array(g.attributes.position.count * 3).fill(1), 3)); floor.geometry = g; floor.position.x = 0; floor.material = new THREE.MeshStandardMaterial({ color: 0x3a2c22, roughness: 0.85 }); }
+  key.intensity = 3.2; scene.add(key.target);
+  scene.background = new THREE.Color(0x0b0c10); scene.fog = new THREE.Fog(0x0b0c10, 8, 22);
+  const sp = +(q.get('s') || 1.4), N = +(q.get('N') || 2), ang = +(q.get('ang') || 1.35), dist = +(q.get('dist') || 4.2);
+  const ts = []; for (let i = 0; i < N; i++) { const t = buildTeammate(M, i % 4); setTeammateLOD(t, 'hi'); t.root.rotation.y = Math.PI / 2; t.root.position.set(-20 - i * 0.9, 0, i * 0.9 - (N - 1) * 0.45); scene.add(t.root); ts.push(t); }
+  const step = () => { for (let k = 0; k < 2; k++) for (const t of ts) { t.root.position.x += sp / 60; animateTeammate(t, 1 / 60, { speed: sp, crouch: !!q.get('c'), alive: true, fl: true, pitch: 0 }); } };
+  for (let i = 0; i < 40; i++) step();
+  window.__frame = () => { step(); const cx = ts[0].root.position.x - 0.45 * (N - 1); key.position.set(cx + 3, 5, 4); key.target.position.set(cx, 0, 0); key.target.updateMatrixWorld();
+    cam.position.set(cx + Math.cos(ang) * dist, +(q.get('cy') || 1.15), Math.sin(ang) * dist); cam.lookAt(cx, 0.85, 0); renderer.render(scene, cam); };
+  window.__frame();
 } else if (view === 'mate') {
-  const t = buildTeammate(M, +(q.get('i') || 0)); scene.add(t.root); t.root.rotation.y = +(q.get('r') || 0.6);
+  // v7: ?acc=scarf|hat|fedora|beanie &col=<hex> (aparência); &face=1 câmera no rosto/pescoço; &N=4 vários lado a lado
+  const look = q.get('acc') ? sanitizeLook({ acc: q.get('acc'), col: q.get('col') || '8a2a24' }) : null;
+  const t = buildTeammate(M, +(q.get('i') || 0), look); scene.add(t.root); t.root.rotation.y = +(q.get('r') || 0.6);
   const n = +(q.get('n') || 90), sp = +(q.get('s') || 0);
   for (let i = 0; i < n; i++) animateTeammate(t, 1 / 60, { speed: sp, crouch: !!q.get('c'), alive: q.get('dead') ? false : true, fl: true, pitch: +(q.get('p') || 0) });
   cam.position.set(+(q.get('cx') || 0), +(q.get('cy') || 1.2), +(q.get('cz') || 3.6)); cam.lookAt(+(q.get('lx') || 0), +(q.get('ly') || 0.95), +(q.get('lz') || 0));
   if (q.get('fov')) { cam.fov = +q.get('fov'); cam.updateProjectionMatrix(); }
   // v5: ?lod=lo força o nível baixo; &mfl=1 acende a luz da lanterna do próprio boneco; &room=1 paredes de um cômodo
   if (q.get('lod')) setTeammateLOD(t, q.get('lod'));
-  console.log('tris hi', teammateTriangles(t, 'hi'), 'lo', teammateTriangles(t, 'lo'));
+  console.log('tris hi', teammateTriangles(t, 'hi'), 'lo', teammateTriangles(t, 'lo'), 'acc hi', accessoryTriangles(t, 'hi'), 'lo', accessoryTriangles(t, 'lo'));
   if (q.get('mfl')) window.__mfl = () => attachTeammateFlashlight(t, { intensity: +(q.get('mfl')) * 30, shadow: true });
   if (q.get('room')) {
     for (const [x, z, ry] of [[0, -2.2, 0], [-2.4, 0, Math.PI / 2], [2.4, 0, -Math.PI / 2]]) {

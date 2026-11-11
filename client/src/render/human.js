@@ -1,19 +1,21 @@
 // Colegas de equipe (v5): manequim de madeira entalhada, estilo boneco articulado de artista — tórax com peito,
 // costelas e escápulas, cintura com junta esférica, quadril, coxas/panturrilhas/antebraços torneados com volume,
 // juntas esféricas mais claras com pinos de latão, mãos entalhadas e cabeça oval com queixo/nariz/sobrancelha.
-// Madeira tingida escura (silhueta escura para leitura no co-op), veios + arranhões/desgaste, cachecol colorido
-// (identifica o jogador) e lanterna funcional na mão direita. Sem mochila (a caixa nas costas da v1 foi removida).
+// Madeira tingida escura (silhueta escura para leitura no co-op), veios + arranhões/desgaste, acessório escolhido
+// pelo jogador (v7: cachecol/fedora/gorro na cor da paleta — render/accessories.js) e lanterna funcional na mão direita. Sem mochila (a caixa nas costas da v1 foi removida).
 // Geometrias e materiais são compartilhados entre os bonecos; dois níveis de detalhe (alto ≈ 7k tri, baixo ≈ 1,5k)
 // trocados por distância (>16 m baixo, <14 m alto). Rig e nomes de juntas iguais à v4 (animações intactas).
 import * as THREE from 'three';
 import { dollWoodTextures } from './hand.js';
+import { attachAccessory, updateAccessory } from './accessories.js';
+import { SLOT_COLORS } from '../../../shared/look.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const sstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 const gauss = (x, w) => Math.exp(-(x * x) / (w * w));
 const lerp = (a, b, t) => a + (b - a) * t;
-export const TEAMMATE_ACCENTS = [0x8a2a24, 0x2a5a80, 0x7a6a24, 0x2f6a3a];
+export const TEAMMATE_ACCENTS = SLOT_COLORS; // v7: cor padrão por vaga (quem não escolheu aparência)
 export const TEAMMATE_LOD_FAR = 16, TEAMMATE_LOD_NEAR = 14;
 
 function grp(parent, x, y, z) { const g = new THREE.Group(); g.position.set(x, y, z); parent.add(g); return g; }
@@ -263,9 +265,10 @@ function carvedHand(t, parent, s, grip) {
   return h;
 }
 
-export function buildTeammate(M, idx = 0) {
-  const accent = TEAMMATE_ACCENTS[idx % TEAMMATE_ACCENTS.length];
-  const Mt = materials(), cloth = accentMat(accent, M), G = geometries();
+// look (v7) = { acc: 'scarf'|'fedora'|'beanie', col } — sem look: cachecol na cor da vaga idx
+export function buildTeammate(M, idx = 0, look = null) {
+  const accent = look && Number.isFinite(look.col) ? look.col : TEAMMATE_ACCENTS[idx % TEAMMATE_ACCENTS.length];
+  const Mt = materials(), G = geometries();
   const root = new THREE.Group(); root.name = 'teammate';
   const t = { root, lodSets: { hi: [], lo: [] }, lod: 'hi' };
   const body = grp(root, 0, 0, 0);       // sobe/desce (agachar, balanço)
@@ -294,10 +297,6 @@ export function buildTeammate(M, idx = 0) {
   const torso = grp(spine, 0, 0.0, 0);
   for (const lv of ['hi', 'lo']) piece(t, torso, lv, G[lv].waist, Mt.joint);
   both(t, torso, 'chest', Mt.body);
-  // cachecol colorido (identifica o jogador): gola + ponta caída na frente
-  const G2 = G.scarf || (G.scarf = { ring: new THREE.TorusGeometry(0.062, 0.024, 8, 18), ringLo: new THREE.TorusGeometry(0.062, 0.024, 5, 10), tail: turned(0.17, prof([[0, 0.022], [1, 0.026]]), { seg: 8, rings: 6, sx: 1.2, sz: 0.35, round0: 0.3, round1: 0.3 }) });
-  for (const [lv, gg] of [['hi', G2.ring], ['lo', G2.ringLo]]) piece(t, torso, lv, gg, cloth, V(0, 0.475, 0.006), V(1.12, 1, 0.98), new THREE.Euler(Math.PI / 2 - 0.12, 0, 0));
-  const tail = new THREE.Mesh(G2.tail, cloth); tail.position.set(0.035, 0.465, 0.085); tail.rotation.set(-0.22, 0, 0.18); torso.add(tail);
   // pescoço e cabeça
   const neckG = grp(torso, 0, 0.5, 0.0);
   both(t, neckG, 'neck', Mt.joint, V(0, 0.085, 0.006));
@@ -321,8 +320,6 @@ export function buildTeammate(M, idx = 0) {
     const hd = carvedHand(t, wr, s, s < 0); hd.position.y = -0.016;
     parts['sh' + s] = sh; parts['el' + s] = el; parts['wr' + s] = wr;
   }
-  // braçadeira na cor do jogador (lê de costas também)
-  for (const [lv, gg] of [['hi', G2.ring], ['lo', G2.ringLo]]) piece(t, parts['sh1'], lv, gg, cloth, V(0, -0.11, 0.002), V(0.82, 0.82, 0.55), new THREE.Euler(Math.PI / 2, 0, 0));
   // lanterna na mão direita (lado -X do boneco, que olha para +Z); a lente aponta para -Y local do punho
   const fl = new THREE.Group(); fl.position.set(0.012, -0.075, 0.0); parts['wr-1'].add(fl);
   const FG = G.fl || (G.fl = {
@@ -341,6 +338,8 @@ export function buildTeammate(M, idx = 0) {
   const probe = (r, sc, cam) => { if (!t.lodLock && cam && cam.parent) updateTeammateLOD(t, cam); };
   t.lodSets.hi.concat(t.lodSets.lo).forEach(m => { if (m.isMesh && (m.geometry === G.hi.chest || m.geometry === G.lo.chest)) m.onBeforeRender = probe; });
   const S = () => ({ x: 0, v: 0 });
+  Object.assign(t, { torso, head });
+  attachAccessory(t, { acc: (look && look.acc) || 'scarf', col: accent }, { chest: G.hi.chest, head: G.hi.head });
   return Object.assign(t, { body, pelvis, spine, torso, neck: neckG, head, parts, fl, lensMat, accent, phase: 0, dead: 0, sp: {}, S, walk: 0, run: 0, crouch: 0, first: true });
 }
 
@@ -353,6 +352,14 @@ export function updateTeammateLOD(t, camera) {
   const want = t.lod === 'hi' ? (d > TEAMMATE_LOD_FAR ? 'lo' : 'hi') : (d < TEAMMATE_LOD_NEAR ? 'hi' : 'lo');
   if (want !== t.lod) applyLOD(t, want);
   return t.lod;
+}
+// v7: troca a aparência de um boneco já montado (prévia do menu / aparência que chegou depois)
+export function setTeammateLook(t, look) {
+  const G = geometries(); if (!look) return;
+  if (t.look && t.look.acc === look.acc && t.look.col === look.col) return;
+  attachAccessory(t, look, { chest: G.hi.chest, head: G.hi.head }); t.accent = look.col;
+  t.root.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  applyLOD(t, t.lod);
 }
 function applyLOD(t, lv) { t.lod = lv; for (const m of t.lodSets.hi) m.visible = lv === 'hi'; for (const m of t.lodSets.lo) m.visible = lv === 'lo'; }
 // triângulos renderizados do boneco no nível dado (para relatórios/testes)
@@ -480,7 +487,7 @@ export function animateTeammate(t, dt, s) {
   const k = (name, target, om = 12, ze = 0.7) => { const st = t.sp[name] || (t.sp[name] = { x: target, v: 0 }); if (t.first) { st.x = target; st.v = 0; } return spr(st, target, om, ze, dt); };
   const P = t.parts, root = t.root;
   // ---------------- morte ----------------
-  if (!s.alive) { deathUpdate(t, dt, s); t.lensMat.emissiveIntensity = 0; t.first = false; return; }
+  if (!s.alive) { deathUpdate(t, dt, s); t.lensMat.emissiveIntensity = 0; t.first = false; updateAccessory(t, dt); return; }
   if (t.rag || t.death) { t.rag = null; t.death = null; root.rotation.z = 0; t.body.position.set(0, 0, 0); t.pelvis.position.set(0, 0.94, 0); t.torso.rotation.set(0, 0, 0); for (const sd of [1, -1]) { t.parts['clav' + sd].rotation.set(0, 0, 0); t.parts['wr' + sd].rotation.set(0, 0, 0); } initGait(t); t.first = true; }
   root.rotation.z = 0;
   const ground = s.ground || null;
@@ -639,6 +646,7 @@ export function animateTeammate(t, dt, s) {
   t.head.rotation.z = k('hdZ', -t.spine.rotation.z * 0.6, 12, 0.7);
   t.lensMat.emissiveIntensity = s.fl ? 3 : 0;
   t.first = false;
+  updateAccessory(t, dt);
 }
 
 // ------------------------------------------------------------------ morte: agarrão + boneco de pano

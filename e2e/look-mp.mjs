@@ -1,0 +1,23 @@
+// v7: dois jogadores com aparências diferentes → cada um vê o colega com o acessório/cor escolhidos.
+import { createGameServer } from '../server/index.js';
+import { launch, newPage } from './launch.mjs';
+const srv = await createGameServer({ port: 0 }); const base = `http://localhost:${srv.port}`;
+const b = await launch(); const errs = [];
+const A = await newPage(b, `${base}/testar?e2e=1&quality=low`, (...a) => errs.push('A ' + a.join(' ')), 960, 540);
+await A.evaluate(() => localStorage.setItem('nsm_look', JSON.stringify({ acc: 'fedora', col: 0xd8c8a2 }))); await A.reload();
+await A.waitForSelector('#testar.on'); await A.click('#tCreate'); await A.waitForSelector('#lobby.on');
+const code = await A.$eval('#lobbyCode', e => e.textContent);
+const B = await newPage(b, `${base}/?sala=${code}&e2e=1&quality=low`, (...a) => errs.push('B ' + a.join(' ')), 960, 540);
+await B.evaluate(() => localStorage.setItem('nsm_look', JSON.stringify({ acc: 'beanie', col: 0x1c5a64 }))); await B.reload();
+await B.waitForSelector('#mode.on'); await B.click('#btnJoin'); await B.waitForSelector('#lobby.on');
+await A.waitForFunction(() => document.querySelectorAll('#lobbyPlayers li .look-acc').length === 2, { timeout: 15000 });
+const lobbyTxt = await A.$eval('#lobbyPlayers', e => e.textContent);
+await B.click('#btnReady'); await A.waitForFunction(() => !document.querySelector('#btnStart').disabled, { timeout: 15000 }); await A.click('#btnStart');
+for (const P of [A, B]) await P.waitForFunction('window.__game && window.__game.lastSnap && window.__game.mates.size === 1', { timeout: 240000, polling: 1000 });
+const seen = async (P) => P.evaluate(() => { const m = [...window.__game.mates.values()][0].v; return { look: m.look, meshes: m.acc.meshes.length }; });
+const a = await seen(A), bb = await seen(B);
+console.log('lobby:', lobbyTxt);
+console.log('A vê', JSON.stringify(a), '| B vê', JSON.stringify(bb));
+const ok = a.look.acc === 'beanie' && a.look.col === 0x1c5a64 && bb.look.acc === 'fedora' && bb.look.col === 0xd8c8a2 && /Gorro/.test(lobbyTxt) && /fedora/i.test(lobbyTxt);
+console.log(ok ? 'PASS' : 'FAIL', 'erros de página:', errs.filter(e => /pageerror/.test(e)).length, errs.slice(0, 5).join(' | '));
+await b.close(); await srv.close(); process.exit(ok ? 0 : 1);
