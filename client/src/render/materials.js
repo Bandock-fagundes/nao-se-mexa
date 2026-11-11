@@ -48,6 +48,11 @@ export function buildMaterials(texSize = 512) {
   M.curtain = new THREE.MeshStandardMaterial({ ...T.fabric, color: 0x5a1416, roughness: 1, side: THREE.DoubleSide });
   M.black = std({ color: 0x0a0807, roughness: 0.9 });
   M.soot = std({ color: 0x141210, roughness: 1 });
+  // v5: tijolo refratário enegrecido da fornalha (a fuligem vem da cor por vértice) e lenha carbonizada
+  M.sootBrick = std({ ...T.brick, roughness: 1, color: 0xd09a84 });
+  // v5: madeira do vão da janela (forro, peitoril): um fio de luar emissivo para o vão não sumir no escuro
+  M.windowWood = std({ ...T.furnWood, roughness: 0.6, color: 0x5a3c28, emissive: 0x070e1c, emissiveIntensity: 1.0 });
+  M.charLog = std({ ...T.furnWood, roughness: 0.95, color: 0x2e2018, emissive: 0x3a0c00, emissiveIntensity: 0.5 });
   M.windowGlass = new THREE.MeshStandardMaterial({ map: nightWindowTexture(), emissive: 0x6a88c0, emissiveMap: null, emissiveIntensity: 0.0, roughness: 0.1 });
   M.windowGlass.emissiveMap = M.windowGlass.map; M.windowGlass.emissiveIntensity = 0.9;
   M.gold = new THREE.MeshStandardMaterial({ color: 0xd8a840, metalness: 1, roughness: 0.25, emissive: 0x442200, emissiveIntensity: 0.6 });

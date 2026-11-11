@@ -3,8 +3,9 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CELL, W, D, T, LEVELS, ROWS } from '../../../shared/config.js';
 import { buildProp, buildKey, buildKnockable, B, C, S, mesh, tint } from './props.js';
-import { storyPainting, windowTexture, noteTexture, NOTES, PAINTING_TITLES } from '../story.js';
+import { storyPainting, noteTexture, NOTES, PAINTING_TITLES, windowDrawingsTexture } from '../story.js';
 import { winSize } from './decorboxes.js';
+import { buildFireGlow, windowSkyMaterial, windowSkyGeometry, windowGlassMaterial, moonPatchMaterial, moonPatchGeometry } from './fx.js';
 import { SURFACE_Y } from '../../../shared/mapgen.js';
 import { makeRng } from '../../../shared/rng.js';
 
@@ -45,6 +46,13 @@ export function buildMansion(map, world, M) {
   const get = (L, x, z) => (x < 0 || z < 0 || x >= W || z >= D) ? T.VOID : lv[L].grid[z * W + x];
   const roomOf = (L, x, z) => (x < 0 || z < 0 || x >= W || z >= D) ? -1 : lv[L].room[z * W + x];
 
+  // v5: vãos das janelas (por andar) para recortar as paredes: plano da face, normal e retângulo (u ao longo da parede)
+  const holes = [[], [], [], []];
+  for (const wdw of map.windows) {
+    const { ww, wh, wy } = winSize(wdw), sx = Math.sin(wdw.rot), alongZ = Math.abs(sx) > 0.5;
+    const uc = alongZ ? wdw.z : wdw.x;
+    holes[wdw.level].push({ nx: Math.round(sx), nz: Math.round(Math.cos(wdw.rot)), plane: alongZ ? wdw.x : wdw.z, u0: uc - ww / 2, u1: uc + ww / 2, y0: wy - wh / 2, y1: wy + wh / 2 });
+  }
   for (let L = 0; L < 4; L++) {
     const y0 = LEVELS[L].y, rh = LEVELS[L].h, H = wallTopFor(L), dh = doorHeight(L);
     const builders = new Map();
@@ -106,8 +114,22 @@ export function buildMansion(map, world, M) {
         else if (dz === 1) { a = [(x + 1) * CELL, (z + 1) * CELL]; b = [x * CELL, (z + 1) * CELL]; n = [0, 0, 1]; }
         else { a = [x * CELL, z * CELL]; b = [(x + 1) * CELL, z * CELL]; n = [0, 0, -1]; }
         const ua = dx !== 0 ? a[1] : a[0], ub = dx !== 0 ? b[1] : b[0];
-        const face = (mat, ya, yb, us, vs, ca, cb, voff = 0) => gb(mat).quadR([a[0], y0 + ya, a[1]], [b[0], y0 + ya, b[1]], [b[0], y0 + yb, b[1]], [a[0], y0 + yb, a[1]], n,
-          [ua / us, (ya + voff) / vs], [ub / us, (ya + voff) / vs], [ub / us, (yb + voff) / vs], [ua / us, (yb + voff) / vs], ca, ca, cb, cb);
+        // v5: vão da janela — a face é recortada (retângulo do vidro) para a janela ter profundidade de verdade
+        const plane = dx !== 0 ? a[0] : a[1];
+        const hole = holes[L].find(h => h.nx === n[0] && h.nz === n[2] && Math.abs(h.plane - plane) < 1e-3 && h.u1 > Math.min(ua, ub) && h.u0 < Math.max(ua, ub));
+        const P = (t, y) => [a[0] + (b[0] - a[0]) * t, y0 + y, a[1] + (b[1] - a[1]) * t];
+        const rect = (mat, t0, t1, ya, yb, us, vs, ca, cb, voff) => { const u0 = ua + (ub - ua) * t0, u1 = ua + (ub - ua) * t1;
+          gb(mat).quadR(P(t0, ya), P(t1, ya), P(t1, yb), P(t0, yb), n, [u0 / us, (ya + voff) / vs], [u1 / us, (ya + voff) / vs], [u1 / us, (yb + voff) / vs], [u0 / us, (yb + voff) / vs], ca, ca, cb, cb); };
+        const hT = hole ? [(hole.u0 - ua) / (ub - ua), (hole.u1 - ua) / (ub - ua)].map(v => Math.min(1, Math.max(0, v))).sort((p, q) => p - q) : null;
+        const face = (mat, ya, yb, us, vs, ca, cb, voff = 0) => {
+          const hy0 = hole ? Math.max(ya, hole.y0) : 0, hy1 = hole ? Math.min(yb, hole.y1) : 0;
+          if (!hole || hy0 >= hy1) return rect(mat, 0, 1, ya, yb, us, vs, ca, cb, voff);
+          const cAt = (y) => ca + (cb - ca) * (y - ya) / (yb - ya);
+          if (hT[0] > 0) rect(mat, 0, hT[0], ya, yb, us, vs, ca, cb, voff);
+          if (hT[1] < 1) rect(mat, hT[1], 1, ya, yb, us, vs, ca, cb, voff);
+          if (hy0 > ya) rect(mat, hT[0], hT[1], ya, hy0, us, vs, ca, cAt(hy0), voff);
+          if (hy1 < yb) rect(mat, hT[0], hT[1], hy1, yb, us, vs, cAt(hy1), cb, voff);
+        };
         if (isTransition(nx, nz)) { face('trim', 0, dh, 1, 1, 0.6, 0.8); continue; } // batente
         const st = styleOf(nx, nz);
         const top = nt === T.HOLE || nt === T.STAIR ? H : H;
@@ -120,7 +142,11 @@ export function buildMansion(map, world, M) {
         if (top > rh) face(paperMat[st] || 'wallRed', rh, top, 1.25, 1.25, 0.72, 0.72);
         // rodapé / guarda-cadeira / sanca
         const off = (k) => [n[0] * k, n[2] * k];
-        const tr = (ya, yb, k, c1, c2) => { const o = off(k); gb('trim').quadR([a[0] + o[0], y0 + ya, a[1] + o[1]], [b[0] + o[0], y0 + ya, b[1] + o[1]], [b[0] + o[0], y0 + yb, b[1] + o[1]], [a[0] + o[0], y0 + yb, a[1] + o[1]], n, [ua, ya], [ub, ya], [ub, yb], [ua, yb], c1, c1, c2, c2); gb('trim').quadR([a[0] + o[0], y0 + yb, a[1] + o[1]], [b[0] + o[0], y0 + yb, b[1] + o[1]], [b[0], y0 + yb, b[1]], [a[0], y0 + yb, a[1]], [0, 1, 0], [ua, 0], [ub, 0], [ub, 0.05], [ua, 0.05], c2, c2, c2, c2); };
+        const tr = (ya, yb, k, c1, c2) => { // v5: interrompido no vão da janela
+          if (hole && ya < hole.y1 && yb > hole.y0) { if (hT[0] > 0) trS(ya, yb, k, c1, c2, 0, hT[0]); if (hT[1] < 1) trS(ya, yb, k, c1, c2, hT[1], 1); return; }
+          trS(ya, yb, k, c1, c2, 0, 1);
+        };
+        const trS = (ya, yb, k, c1, c2, t0, t1) => { const o = off(k); const A = P(t0, 0), Bp = P(t1, 0), a = [A[0], A[2]], b = [Bp[0], Bp[2]], ua = dx !== 0 ? a[1] : a[0], ub = dx !== 0 ? b[1] : b[0]; gb('trim').quadR([a[0] + o[0], y0 + ya, a[1] + o[1]], [b[0] + o[0], y0 + ya, b[1] + o[1]], [b[0] + o[0], y0 + yb, b[1] + o[1]], [a[0] + o[0], y0 + yb, a[1] + o[1]], n, [ua, ya], [ub, ya], [ub, yb], [ua, yb], c1, c1, c2, c2); gb('trim').quadR([a[0] + o[0], y0 + yb, a[1] + o[1]], [b[0] + o[0], y0 + yb, b[1] + o[1]], [b[0], y0 + yb, b[1]], [a[0], y0 + yb, a[1]], [0, 1, 0], [ua, 0], [ub, 0], [ub, 0.05], [ua, 0.05], c2, c2, c2, c2); };
         tr(0, 0.16, 0.025, 0.5, 0.7); tr(0.97, 1.03, 0.02, 0.8, 0.9); tr(rh - 0.14, rh - 0.02, 0.05, 0.55, 0.5);
       }
     }
@@ -194,6 +220,9 @@ export function buildMansion(map, world, M) {
     levels[p.level].add(g);
     staticByLevel[p.level].push(g);
     g.traverse(o => { if (o.userData.flame) res.flames.push(o); });
+    if (g.userData.firebox) { // v5: brilho tremulante do fogo no piso à frente da lareira (fora da pegada; não colide)
+      const glow = buildFireGlow(2.4, 1.8); glow.position.set(0, 0.009, g.userData.firebox.zf - 0.05); g.add(glow); glow.userData.dynamic = true;
+    }
     if (p.container !== undefined && g.userData.parts) {
       // v2: cada parte (gaveta / porta / tampa) é um alvo próprio com sua caixa de mira
       const c = map.containers[p.container];
@@ -282,28 +311,31 @@ export function buildMansion(map, world, M) {
   }
   // ---------- janelas, quadros, tapetes, cortinas ----------
   const deco = [[], [], [], []];
-  const winMats = new Map();
+  // v5: janela de verdade — vão recortado na parede (ver holes), forro de madeira no vão, peitoril, guarnição,
+  // caixilho com travessas, vidro sujo e transparente, desenhos das crianças colados no vidro, o céu noturno lá fora
+  // (shader pela direção do olhar: lua, estrelas, árvores) e a mancha de luar no piso. A luz fria é a 'moon' do pool.
+  const skyGeos = [[], [], [], []], glassGeos = [[], [], [], []], patchGeos = [[], [], [], []];
+  const _q = new THREE.Matrix4();
   map.windows.forEach((wdw, wi) => {
     const g = new THREE.Group(); g.position.set(wdw.x, LEVELS[wdw.level].y, wdw.z); g.rotation.y = wdw.rot; levels[wdw.level].add(g);
     const { ww, wh, wy } = winSize(wdw);
-    // v2 fase 2: vidro com céu noturno + desenhos de criança colados (5 variações; a mesma janela é igual para todos)
-    const vk = (wi * 7 + (wdw.room || 0) * 3) % 5 + (wdw.small ? 's' : 'b');
-    if (!winMats.has(vk)) { const tx = windowTexture(parseInt(vk), wdw.small); winMats.set(vk, new THREE.MeshStandardMaterial({ map: tx, color: 0x7c7c7c, emissive: 0x5a6888, emissiveMap: tx, emissiveIntensity: 0.16, roughness: 0.5 }) /* menos brilho: com a lanterna de perto o vidro + papel estouravam (bloom na tela toda) */); }
-    const glass = new THREE.Mesh(new THREE.PlaneGeometry(ww, wh), winMats.get(vk)); glass.position.set(0, wy, 0.012); g.add(glass);
-    const fr = new THREE.Group(); g.add(fr);
-    B(fr, ww + 0.14, 0.08, 0.08, M.trim, 0, wy + wh / 2, 0.03); B(fr, ww + 0.2, 0.08, 0.14, M.trim, 0, wy - wh / 2, 0.05);
-    B(fr, 0.07, wh, 0.08, M.trim, -ww / 2, wy, 0.03); B(fr, 0.07, wh, 0.08, M.trim, ww / 2, wy, 0.03);
-    B(fr, 0.035, wh, 0.05, M.trim, 0, wy, 0.03); B(fr, ww, 0.035, 0.05, M.trim, 0, wy + wh * 0.15, 0.03);
-    deco[wdw.level].push(fr);
-    if (!wdw.small && !wdw.curtain && !wdw.noDrape) for (const s of [-1, 1]) {
-      const geo = new THREE.PlaneGeometry(0.45, 2.4, 16, 1); const pos = geo.attributes.position;
-      for (let i = 0; i < pos.count; i++) pos.setZ(i, Math.sin(pos.getX(i) * 38) * 0.04);
-      geo.computeVertexNormals();
-      const c = new THREE.Mesh(geo, M.curtain); c.position.set(s * (ww / 2 + 0.2), wy - 0.2, 0.12); c.castShadow = true; g.add(c);
-    }
+    const parts = buildWindowParts(g, wdw, wi, M);
+    g.updateMatrixWorld(true); _q.copy(g.matrixWorld);
+    // a matriz do nível é identidade (nível na origem): dá para fundir no espaço do mundo
+    skyGeos[wdw.level].push(parts.sky.applyMatrix4(_q));
+    glassGeos[wdw.level].push(parts.glass.applyMatrix4(_q));
+    if (parts.patch) patchGeos[wdw.level].push(parts.patch.applyMatrix4(_q));
+    deco[wdw.level].push(parts.frame);
     // luar
-    res.lamps.push({ kind: 'moon', level: wdw.level, x: wdw.x + Math.sin(wdw.rot) * 0.8, y: LEVELS[wdw.level].y + wy, z: wdw.z + Math.cos(wdw.rot) * 0.8, color: 0x6a84c8, intensity: 1.1, range: 5.5, state: 'on' });
+    res.lamps.push({ kind: 'moon', level: wdw.level, x: wdw.x + Math.sin(wdw.rot) * 0.7, y: LEVELS[wdw.level].y + wy, z: wdw.z + Math.cos(wdw.rot) * 0.7, color: 0x6a84c8, intensity: 1.5, range: 5.5, state: 'on' });
+    res.windows.push({ level: wdw.level, g, ww, wh, wy });
   });
+  for (let L = 0; L < 4; L++) {
+    const add = (geos, mat, order) => { if (!geos.length) return; const m = new THREE.Mesh(mergeGeometries(geos, false), mat); m.renderOrder = order; m.castShadow = false; m.receiveShadow = false; levels[L].add(m); return m; };
+    add(skyGeos[L], windowSkyMaterial(), 0);
+    const gl = add(glassGeos[L], windowGlassMaterial(), 3); if (gl) gl.receiveShadow = false;
+    add(patchGeos[L], moonPatchMaterial(), 2);
+  }
   for (const dc of map.decor) {
     const y0 = LEVELS[dc.level].y;
     if (dc.kind === 'painting') {
@@ -561,18 +593,73 @@ export class LightPool {
       const lp = s.lamp;
       s.k = Math.min(1, s.k + dt * 3);
       s.l.position.set(lp.lx ?? lp.x, lp.y, lp.lz ?? lp.z);
-      s.l.color.setHex(lp.color); s.l.distance = lp.range * 0.75;
+      s.l.color.setHex(lp.color); s.l.distance = lp.range * (lp.kind === 'fire' ? 1.0 : 0.75);
       // poças de luz quentes e pequenas: a lanterna é a luz principal
-      s.l.intensity = lp.intensity * (lp.kind === 'moon' ? 1.0 : 0.42) * s.k * flicker(lp, t); // v2: luzes da casa mais fracas — a lanterna manda
+      s.l.intensity = lp.intensity * (lp.kind === 'moon' ? 1.0 : lp.kind === 'fire' ? 0.95 : 0.42) * s.k * flicker(lp, t); // v5: a lareira acesa ilumina a sala de verdade // v2: luzes da casa mais fracas — a lanterna manda
     }
   }
 }
 export function flicker(lp, t) {
   if (lp.state === 'flicker') {
     const s = lp.seed || 0;
-    if (lp.kind === 'candle' || lp.kind === 'fire' || lp.kind === 'flame') return 0.8 + 0.2 * Math.sin(t * 13 + s) * Math.sin(t * 7.3 + s * 2);
+    if (lp.kind === 'fire') return 0.78 + 0.12 * Math.sin(t * 9.1 + s) * Math.sin(t * 5.3 + s * 2) + 0.07 * Math.sin(t * 17.7 + s * 3) + 0.03 * Math.sin(t * 31 + s);
+    if (lp.kind === 'candle' || lp.kind === 'flame') return 0.8 + 0.2 * Math.sin(t * 13 + s) * Math.sin(t * 7.3 + s * 2);
     const n = Math.sin(t * 23 + s) * Math.sin(t * 3.1 + s) + Math.sin(t * 57 + s * 3) * 0.3;
     return n > 0.55 ? 0.08 : 0.85 + 0.15 * Math.sin(t * 40 + s);
   }
   return 1;
+}
+
+// ---------- v5: peças de uma janela (exportado para o trailer/lab) ----------
+// g: grupo da janela (origem no pé da parede, centro do vão; +z = para dentro do cômodo, -z = para dentro da parede).
+// Põe em g as malhas próprias (desenhos colados, cortinas) e devolve:
+//   frame: grupo com madeira/forro/peitoril (vai para a fusão estática), sky/glass/patch: geometrias no espaço de g.
+const drawMats = new Map();
+export function buildWindowParts(g, wdw, wi, M) {
+  const { ww, wh, wy } = winSize(wdw);
+  const gd = 0.22;                                   // profundidade do caixilho dentro da parede (0,5 m de espessura)
+  const yb = wy - wh / 2, yt = wy + wh / 2;
+  const fr = new THREE.Group(); g.add(fr);
+  // forro do vão (madeira) — laterais, topo — e peitoril que avança 9 cm para o cômodo
+  const WW = M.windowWood || M.trim;
+  for (const s of [-1, 1]) B(fr, 0.03, wh, gd + 0.01, WW, s * (ww / 2 - 0.015), wy, -gd / 2, 0xffffff);
+  B(fr, ww, 0.03, gd + 0.01, WW, 0, yt - 0.015, -gd / 2, 0xd0d0d0);
+  B(fr, ww + 0.14, 0.04, gd + 0.09, WW, 0, yb + 0.005, -gd / 2 + 0.045, 0xffffff);   // peitoril
+  // guarnição na parede (cobre a emenda do recorte)
+  for (const s of [-1, 1]) B(fr, 0.09, wh + 0.07, 0.03, M.trim, s * (ww / 2 + 0.03), wy + 0.015, 0.015, 0x3a2214);
+  B(fr, ww + 0.15, 0.06, 0.035, M.trim, 0, yt + 0.01, 0.0175, 0x3a2214);
+  B(fr, ww + 0.19, 0.02, 0.05, M.trim, 0, yt + 0.035, 0.025, 0x2a160c);                   // cornija da guarnição
+  B(fr, ww + 0.04, 0.035, 0.022, M.trim, 0, yb - 0.02, 0.011, 0x3a2214);                    // avental sob o peitoril
+  // caixilho (guilhotina antiga): moldura + travessas
+  const z = -gd, sash = 0x2a1a10, bw = wdw.small ? 0.04 : 0.05;
+  for (const s of [-1, 1]) B(fr, bw, wh, 0.045, M.trim, s * (ww / 2 - 0.03 - bw / 2), wy, z, sash);
+  B(fr, ww - 0.06, bw, 0.045, M.trim, 0, yt - 0.03 - bw / 2, z, sash); B(fr, ww - 0.06, bw, 0.045, M.trim, 0, yb + 0.03 + bw / 2, z, sash);
+  if (wdw.small) { B(fr, 0.025, wh - 0.08, 0.03, M.trim, 0, wy, z, sash); B(fr, ww - 0.08, 0.025, 0.03, M.trim, 0, wy, z, sash); }
+  else {
+    B(fr, ww - 0.06, 0.055, 0.06, M.trim, 0, wy, z + 0.01, sash);                         // trilho de encontro
+    B(fr, 0.026, wh - 0.08, 0.03, M.trim, 0, wy, z, sash);
+    for (const f of [0.25, 0.75]) B(fr, ww - 0.08, 0.024, 0.03, M.trim, 0, yb + wh * f, z, sash);
+    B(fr, 0.06, 0.02, 0.03, M.brass, 0, wy + 0.035, z + 0.04, 0xa08040);                   // tranca
+  }
+  // vidro (mesma folha para todo o vão) e céu lá fora logo atrás
+  const glass = new THREE.PlaneGeometry(ww - 0.06, wh - 0.06); glass.translate(0, wy, z - 0.006);
+  const out = new THREE.Vector3(-Math.sin(wdw.rot), 0, -Math.cos(wdw.rot));                 // para fora da casa
+  const az = ((wi * 0.6180339) % 1 - 0.5) * 0.7, el = 0.24 + ((wi * 0.4142) % 1) * 0.16;
+  const moon = out.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), az).multiplyScalar(Math.cos(el)); moon.y = Math.sin(el);
+  const sky = windowSkyGeometry(ww - 0.02, wh - 0.02, wy, z - 0.03, moon);
+  // desenhos de criança colados no vidro, do lado de dentro (papel com transparência em volta)
+  const vk = (wi * 7 + (wdw.room || 0) * 3) % 5 + (wdw.small ? 's' : 'b');
+  if (!drawMats.has(vk) && typeof document !== 'undefined') { const tx = windowDrawingsTexture(parseInt(vk), wdw.small); drawMats.set(vk, new THREE.MeshStandardMaterial({ map: tx, color: 0x625c52, emissive: 0x1a2236, emissiveMap: tx, emissiveIntensity: 0.5, roughness: 0.9, transparent: true, alphaTest: 0.02, depthWrite: false }) /* fosco: a lanterna de perto estourava o papel; o emissivo é o luar atravessando o papel */); }
+  if (drawMats.has(vk)) { const dm = new THREE.Mesh(new THREE.PlaneGeometry(ww - 0.06, wh - 0.06), drawMats.get(vk)); dm.position.set(0, wy, z - 0.002); dm.renderOrder = 4; g.add(dm); }
+  // cortinas laterais (mesma medida de antes: decorboxes.windowBox)
+  if (!wdw.small && !wdw.curtain && !wdw.noDrape) for (const s of [-1, 1]) {
+    const geo = new THREE.PlaneGeometry(0.45, 2.4, 16, 1); const pos = geo.attributes.position;
+    for (let i = 0; i < pos.count; i++) pos.setZ(i, Math.sin(pos.getX(i) * 38) * 0.04);
+    geo.computeVertexNormals();
+    const c = new THREE.Mesh(geo, M.curtain); c.position.set(s * (ww / 2 + 0.2), wy - 0.2, 0.12); c.castShadow = true; g.add(c);
+  }
+  // mancha de luar no piso (não sob a cortina-esconderijo, que fica fechada na frente)
+  let patch = null;
+  if (!wdw.curtain) { patch = moonPatchGeometry(ww, 0.35, wdw.small ? 1.4 : 2.3); patch.translate(0, 0.011, 0); }
+  return { frame: fr, sky, glass, patch };
 }

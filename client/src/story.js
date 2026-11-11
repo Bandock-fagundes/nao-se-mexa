@@ -168,16 +168,20 @@ function paperSheet(g, rng, x, y, w, h, rot, draw) {
   g.restore();
 }
 const winCache = new Map();
-export function windowTexture(variant, small = false) {
-  const key = variant + (small ? 's' : 'b'); if (winCache.has(key)) return winCache.get(key);
-  const rng = makeRng('janela-' + key);
+// v5: windowDrawingsTexture = só os desenhos e a sujeira, com fundo transparente (vão colados no vidro da janela 3D)
+export function windowDrawingsTexture(variant, small = false) { return windowTexture(variant, small, true); }
+export function windowTexture(variant, small = false, clear = false) {
+  const key = variant + (small ? 's' : 'b') + (clear ? 'c' : ''); if (winCache.has(key)) return winCache.get(key);
+  const rng = makeRng('janela-' + key.replace(/c$/, ''));
   const W = 256, H = small ? 256 : 436, [c, g] = canvas(W, H);
+  if (clear) { for (let i = 0; i < 120; i++) rng.next(); } else { // mesmo sorteio que a versão com céu
   const gr = g.createLinearGradient(0, 0, 0, H); gr.addColorStop(0, '#1a2a4a'); gr.addColorStop(0.7, '#0c1424'); gr.addColorStop(1, '#05070c'); g.fillStyle = gr; g.fillRect(0, 0, W, H);
   g.fillStyle = 'rgba(220,230,255,0.9)'; g.beginPath(); g.arc(190, 60, 16, 0, 7); g.fill();
   for (let i = 0; i < 40; i++) { g.fillStyle = `rgba(220,230,255,${rng.next() * 0.6})`; g.fillRect(rng.next() * W, rng.next() * H * 0.5, 1.5, 1.5); }
   g.strokeStyle = '#020305'; g.lineWidth = 5; // galhos secos
   for (let i = 0; i < 5; i++) { g.beginPath(); let x = 20 + i * 52, y = H; g.moveTo(x, y); for (let k = 0; k < 7; k++) { x += Math.sin(i * 7 + k) * 18; y -= H / 11; g.lineTo(x, y); } g.stroke(); }
   g.fillStyle = '#020305'; g.fillRect(0, H * 0.82, W, H * 0.18);
+  }
   // sujeira e condensação no vidro
   for (let i = 0; i < 18; i++) { const x = rng.next() * W, y = rng.next() * H, r = 10 + rng.next() * 40; const sg = g.createRadialGradient(x, y, 0, x, y, r); sg.addColorStop(0, 'rgba(160,170,180,0.10)'); sg.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = sg; g.fillRect(0, 0, W, H); }
   const v = variant % 5;

@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { makeRng } from '../../../shared/rng.js';
+import { buildFlames, buildSparks, coalMaterial } from './fx.js';
 
 export function tint(geo, hex) {
   const c = new THREE.Color(hex);
@@ -330,14 +331,69 @@ export function buildProp(kind, w, d, M, variant = 0) {
       return g;
     }
     case 'fireplace': {
-      const W = w - 0.2;
-      B(g, W, 1.25, 0.42, M.stone, 0, 0.625, -0.02, 0x9a948a);
-      B(g, W * 0.55, 0.8, 0.44, M.soot, 0, 0.4, 0.0);
-      B(g, W + 0.2, 0.1, 0.55, M.darkWood, 0, 1.3, 0.02);
-      B(g, W * 0.6, 0.03, 0.3, M.iron, 0, 0.12, 0.05);
-      for (let i = 0; i < 3; i++) C(g, 0.05, 0.05, 0.45, M.darkWood, -0.15 + i * 0.15, 0.17, 0.02, 0x2a1810, 8, 0, Math.PI / 2);
-      for (let i = 0; i < 4; i++) { const f = new THREE.Mesh(new THREE.PlaneGeometry(0.22, 0.4), M.fire); f.position.set(-0.2 + i * 0.13, 0.33, 0.05 + (i % 2) * 0.04); f.rotation.y = i * 0.6; f.userData.flame = true; f.userData.dynamic = true; g.add(f); }
-      C(g, 0.05, 0.05, 0.3, M.brass, -W / 2 + 0.3, 1.5, 0.05, 0xffffff, 8); C(g, 0.05, 0.05, 0.3, M.brass, W / 2 - 0.3, 1.5, 0.05, 0xffffff, 8);
+      // v5: lareira de verdade — boca aberta com fornalha de tijolo enegrecido, soleira de pedra, consolo de madeira,
+      // cães de ferro com lenha, leito de brasas, chamas animadas (shader) e faíscas. A pegada (w × d, altura 1,65)
+      // é a mesma de antes: nada muda na colisão/gerador. A luz é a 'fire' do gerador (pool de luzes), o brilho no
+      // chão é posto por mansion.js (fica fora da pegada).
+      const W = w - 0.2, D2 = Math.min(d, 0.5) / 2;               // frente em +D2, parede em -D2
+      const ow = Math.min(0.92, W * 0.52), oh = 0.8, bodyH = 1.22;  // boca
+      const zf = D2 - 0.08, zb = -D2 + 0.03;                        // face da frente do corpo / fundo da fornalha
+      const pier = (W - ow) / 2;
+      // corpo de pedra (2 pilares + verga) — o vão do meio fica aberto
+      for (const sx of [-1, 1]) B(g, pier, bodyH, zf - (-D2), M.stone, sx * (ow / 2 + pier / 2), bodyH / 2, (zf - D2) / 2, 0x8e887e);
+      B(g, ow, bodyH - oh, zf - (-D2), M.stone, 0, oh + (bodyH - oh) / 2, (zf - D2) / 2, 0x8e887e);
+      // fornalha: fundo e laterais em leque, tijolo com fuligem (mais preto em cima)
+      const inner = ow - 0.24, depth = zf - zb;
+      const soot = (geo, yTop) => { const p = geo.attributes.position, c = new Float32Array(p.count * 3); for (let i = 0; i < p.count; i++) { const k = 0.8 - 0.62 * Math.pow(Math.min(1, Math.max(0, p.getY(i) / yTop)), 0.8); c[i * 3] = k; c[i * 3 + 1] = k * 0.86; c[i * 3 + 2] = k * 0.78; } geo.setAttribute('color', new THREE.BufferAttribute(c, 3)); return geo; };
+      const back = new THREE.Mesh(soot(new THREE.PlaneGeometry(inner, oh, 1, 4).translate(0, oh / 2, 0), oh), M.sootBrick); back.position.z = zb; g.add(back);
+      for (const sx of [-1, 1]) {
+        const len = Math.hypot((ow - inner) / 2, depth), ang = Math.atan2((ow - inner) / 2, depth);
+        const geo = soot(new THREE.PlaneGeometry(len, oh, 1, 4).translate(0, oh / 2, 0), oh);
+        const m = new THREE.Mesh(geo, M.sootBrick); m.position.set(sx * (inner / 2 + (ow - inner) / 4), 0, (zb + zf) / 2);
+        m.rotation.y = -sx * (Math.PI / 2 - ang); g.add(m);
+      }
+      // teto da fornalha (fuligem) e piso de cinzas
+      const roof = new THREE.Mesh(tint(new THREE.PlaneGeometry(ow, depth), 0x1a1512), M.soot); roof.rotation.x = Math.PI / 2; roof.position.set(0, oh - 0.002, (zb + zf) / 2); g.add(roof);
+      B(g, ow, 0.05, depth, M.soot, 0, 0.025, (zb + zf) / 2, 0x0c0a09);
+      // soleira (pedra mais clara, um degrau baixo que avança para o cômodo) e moldura da boca
+      B(g, Math.min(W, ow + 0.5), 0.05, D2 - zf + 0.02, M.stone, 0, 0.025, (zf + D2) / 2, 0x6e6a64);
+      for (const sx of [-1, 1]) B(g, 0.05, oh + 0.03, 0.03, M.iron, sx * (ow / 2 + 0.01), (oh + 0.03) / 2, zf + 0.012, 0x2a2826);
+      B(g, ow + 0.07, 0.05, 0.03, M.iron, 0, oh + 0.01, zf + 0.012, 0x2a2826);
+      // consolo de madeira: pilastras, friso e prateleira
+      for (const sx of [-1, 1]) {
+        B(g, 0.12, bodyH - 0.06, 0.05, M.darkWood, sx * (ow / 2 + 0.13), (bodyH - 0.06) / 2, zf + 0.022, 0x4a2c1a);
+        B(g, 0.16, 0.1, 0.07, M.darkWood, sx * (ow / 2 + 0.13), bodyH - 0.1, zf + 0.03, 0x3a2214); // capitel
+        B(g, 0.16, 0.08, 0.06, M.darkWood, sx * (ow / 2 + 0.13), 0.04, zf + 0.026, 0x3a2214);  // base
+      }
+      B(g, ow + 0.38, 0.16, 0.035, M.darkWood, 0, oh + 0.2, zf + 0.016, 0x4a2c1a);            // friso
+      B(g, W, 0.07, D2 * 2 - 0.02, M.darkWood, 0, bodyH + 0.035, 0, 0x3c2416);              // prateleira
+      B(g, W - 0.06, 0.03, D2 * 2 - 0.06, M.darkWood, 0, bodyH - 0.012, -0.01, 0x2a160c);
+      // cães de ferro (andirons) + grelha
+      for (const sx of [-1, 1]) {
+        B(g, 0.03, 0.03, 0.3, M.iron, sx * 0.17, 0.09, (zb + zf) / 2 + 0.02, 0x222120);
+        C(g, 0.018, 0.022, 0.2, M.iron, sx * 0.17, 0.15, zf - 0.03, 0x222120, 8);
+        S(g, 0.03, M.brass, sx * 0.17, 0.27, zf - 0.03, 0x8a6a30, 1, 1, 1, 8);
+      }
+      for (let i = 0; i < 4; i++) B(g, 0.38, 0.012, 0.012, M.iron, 0, 0.11, zb + 0.1 + i * 0.06, 0x222120);
+      // lenha queimando (casca escura, ponta carbonizada)
+      const logZ = (zb + zf) / 2 + 0.01;
+      C(g, 0.048, 0.052, 0.5, M.charLog, -0.02, 0.15, logZ - 0.05, 0x3a2416, 9, 0, Math.PI / 2 + 0.05);
+      C(g, 0.045, 0.05, 0.46, M.charLog, 0.03, 0.15, logZ + 0.06, 0x2e1c12, 9, 0, Math.PI / 2 - 0.08);
+      { const l = C(g, 0.04, 0.045, 0.42, M.charLog, 0.0, 0.23, logZ, 0x241610, 9, 0, Math.PI / 2); l.rotation.set(0.0, 0.55, Math.PI / 2 + 0.12); }
+      // leito de brasas (não ilumina: é só emissivo no shader)
+      const coal = new THREE.Mesh(new THREE.PlaneGeometry(ow - 0.18, depth - 0.08), coalMaterial()); coal.rotation.x = -Math.PI / 2; coal.position.set(0, 0.056, logZ); coal.userData.dynamic = true; g.add(coal);
+      // chamas (billboards em Y) e faíscas
+      const fl = [];
+      const fx0 = [-0.17, -0.06, 0.05, 0.16, -0.11, 0.1, 0.0];
+      fx0.forEach((x, i) => fl.push({ x, y: 0.12 + (i > 3 ? 0.06 : 0), z: logZ + ((i * 37) % 5 - 2) * 0.02, w: 0.2 + (i % 3) * 0.05, h: i === 6 ? 0.62 : 0.34 + ((i * 53) % 7) * 0.035, seed: i * 1.37 + 0.2 }));
+      const flames = buildFlames(fl); flames.userData.dynamic = true; g.add(flames);
+      const sparks = buildSparks(26, -0.15, 0.15, 0.2, oh - 0.25, logZ - 0.05, logZ + 0.05); sparks.userData.dynamic = true; g.add(sparks);
+      // castiçais e relógio sobre o consolo
+      C(g, 0.035, 0.05, 0.28, M.brass, -W / 2 + 0.25, bodyH + 0.21, 0.0, 0xffffff, 8); C(g, 0.035, 0.05, 0.28, M.brass, W / 2 - 0.25, bodyH + 0.21, 0.0, 0xffffff, 8);
+      C(g, 0.012, 0.012, 0.08, M.paper, -W / 2 + 0.25, bodyH + 0.39, 0.0, 0xe8dcc0, 6); C(g, 0.012, 0.012, 0.06, M.paper, W / 2 - 0.25, bodyH + 0.38, 0.0, 0xe8dcc0, 6);
+      B(g, 0.22, 0.26, 0.1, M.darkWood, 0.12, bodyH + 0.2, -0.04, 0x3a2214);
+      { const face = mesh(new THREE.CircleGeometry(0.075, 18), M.paper, 0xc8bc9a); face.position.set(0.12, bodyH + 0.22, 0.012); g.add(face); }
+      g.userData.firebox = { ow, oh, zf, logZ }; // usado por mansion.js (brilho no chão) e pelo trailer
       return g;
     }
     case 'bookshelf': case 'kshelf': case 'pshelf': case 'mshelf': case 'winerack': {

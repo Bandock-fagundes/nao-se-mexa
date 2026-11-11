@@ -1,6 +1,7 @@
 // Sessão de jogo no cliente: mundo 3D, jogador local (predição), colegas e criatura interpolados,
 // interações, áudio posicional, HUD, espectador e painel de diagnóstico (modo teste).
 import * as THREE from 'three';
+import { setFxTime } from './render/fx.js';
 import { generateFromParams } from '../../shared/mapgen.js';
 import { World, cellOf } from '../../shared/world.js';
 import { PLAYER, LEVELS, PHASES, CELL, T, W, D, GEN_VERSION } from '../../shared/config.js';
@@ -337,6 +338,7 @@ export class Game {
     // ----- luzes -----
     this.pool.update(dt, this.t, cam.position, camLevel, this.view.lamps);
     for (const lp of this.view.flickerMeshes) { const f = flicker(lp, this.t); if (lp.bulb) lp.bulb.material.emissiveIntensity = 1.6 * f; if (lp.bulbs) lp.bulbs[0].material.emissiveIntensity = 1.6 * f; }
+    setFxTime(this.t); // v5: fogo, brasas, faíscas e céu das janelas
     for (const fl of this.view.flames) { fl.scale.y = 0.8 + 0.3 * Math.sin(this.t * 11 + fl.id) * Math.sin(this.t * 4.3 + fl.id); fl.rotation.y += dt * 0.6; }
     // ----- lanterna local -----
     const showHand = active && (!this.frozen || wk > 0.85);
