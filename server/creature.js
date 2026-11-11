@@ -358,7 +358,7 @@ export class Creature {
         if (!this.struck && this.stateT >= 0.35) {
           this.struck = true;
           const victims = m.attackStrike(this);
-          if (victims.length) { this.setState('kill', 1.9); this.killed = victims[0]; if (this.dir) this.dir.onEncounterEnd('morte'); break; }
+          if (victims.length) { this.setState('kill', 2.6); this.killed = victims[0]; if (this.dir) this.dir.onEncounterEnd('morte'); break; }
         }
         if (this.stateT >= this.durState) {
           const tracked = this.vis && this.vis.tracked.includes(this.target);
@@ -366,10 +366,14 @@ export class Creature {
         }
         break;
       }
-      case 'kill':
+      case 'kill': {
+        // v6: agarrão — encara a vítima (o cliente puxa o corpo até as mãos dela)
+        const vp = this.killed && m.players.get(this.killed);
+        if (vp && this.stateT < 1.4) this.faceToward(Math.atan2(vp.x - this.x, vp.z - this.z), CREATURE.turnRate.fast, dt);
         pitchTarget = -0.5;
         if (this.stateT >= this.durState) { this.target = null; this.setState('recover', this.rng.float(...AI.recoverTime)); }
         break;
+      }
       case 'hear': {
         accel = 10; turn = CREATURE.turnRate.fast;
         this.faceToward(this.lookAt, turn * 0.7, dt);

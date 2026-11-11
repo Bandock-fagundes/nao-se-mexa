@@ -330,7 +330,7 @@ let glassMat = null;
 export function windowGlassMaterial() {
   if (glassMat) return glassMat;
   glassMat = new THREE.MeshStandardMaterial({ color: 0x3a4450, roughness: 0.22, metalness: 0.0, transparent: true, opacity: 0.12, depthWrite: false, alphaMap: glassDirtTexture() });
-  glassMat.opacity = glassMat.alphaMap ? 0.4 : 0.12; // escuro e fino: a lanterna faz um brilho, não deixa o vidro leitoso
+  glassMat.opacity = glassMat.alphaMap ? 0.24 : 0.1; // v6: mais limpo — o quintal escuro lá fora aparece // escuro e fino: a lanterna faz um brilho, não deixa o vidro leitoso
   return glassMat;
 }
 function glassDirtTexture() {

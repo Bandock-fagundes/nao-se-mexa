@@ -530,7 +530,7 @@ export class CreatureAnimator {
       f.y = BALL_Y + w.h * Math.pow(Math.sin(Math.PI * Math.pow(u, 0.85)), 1.0);
       f.psi = lerp(w.psi0, PSI_F + 0.18, u) - (0.55 + w.run * 0.3) * Math.sin(Math.PI * u);
       f.toe = PSI_TOE - (0.7 + w.run * 0.3) * Math.sin(Math.PI * Math.min(1, u * 1.15));
-      if (u >= 1) { f.sw = null; f.planted = true; f.y = BALL_Y; if (this.footCb && !this.first) this.footCb(f.s > 0 ? 'L' : 'R', w.run); }
+      if (u >= 1) { f.sw = null; f.planted = true; f.y = BALL_Y; if (!this.first && w.dur > 0.2) this.impact = 1; if (this.footCb && !this.first) this.footCb(f.s > 0 ? 'L' : 'R', w.run); }
     }
     for (const k of ['L', 'R']) {
       const f = this.feet[k];
@@ -650,11 +650,29 @@ export class CreatureAnimator {
       curl += (0.7 * strike - 0.3 * up) * w; jaw += (0.4 + 0.35 * wind) * w;
     }
     if ((w = W('kill'))) {
-      P.spine1.x += 0.6 * w; P.spine2.x += 0.3 * w; P.chest.x += 0.15 * w; P.neck.x += 0.3 * w;
-      P.head.x += (0.25 + Math.max(0, Math.sin(t * 6)) * 0.12) * w; P.head.z += Math.sin(t * 3.1) * 0.15 * w;
-      P.upperArmL.x -= 1.1 * w; P.upperArmR.x -= 1.1 * w; P.forearmL.x -= 0.6 * w; P.forearmR.x -= 0.6 * w;
-      hip.y -= 0.42 * w; hip.z += 0.1 * w; curl += 0.9 * w;
-      jaw += (0.4 + 0.2 * Math.abs(Math.sin(t * 5))) * w;
+      // v6: AGARRÃO — 0–0,3 s as duas mãos avançam e fecham no peito da vítima; 0,3–1,1 s ergue e puxa até o
+      // rosto (coluna se endireita, cabeça desce para encarar, boca escancarada); 1,1–1,45 s sacode;
+      // 1,45 s solta/arremessa para baixo; depois se curva sobre o corpo (pose antiga de 'kill').
+      const at = lt.kill;
+      const reach = smooth(0, 0.3, at), lift = smooth(0.3, 1.05, at), rel = smooth(1.42, 1.62, at), hunch = smooth(1.55, 2.2, at);
+      const hold = reach * (1 - rel), up = lift * (1 - rel);
+      const shake = at > 1.05 && at < 1.45 ? Math.sin(at * 38) * (1 - smooth(1.05, 1.45, at) * 0.5) : 0;
+      P.upperArmL.x -= (0.9 * hold - 0.25 * up + 0.08 * shake + 0.3 * rel * (1 - hunch)) * w; P.upperArmR.x -= (0.9 * hold - 0.25 * up - 0.08 * shake + 0.3 * rel * (1 - hunch)) * w;
+      P.upperArmL.z += 0.22 * hold * w; P.upperArmR.z -= 0.22 * hold * w;               // mãos fecham para o centro
+      P.forearmL.x -= (0.3 * hold + 1.05 * up) * w; P.forearmR.x -= (0.3 * hold + 1.05 * up) * w;
+      P.handL.x -= 0.35 * hold * w; P.handR.x -= 0.35 * hold * w;
+      P.spine1.x += (0.2 * hold - 0.3 * up) * w; P.spine2.x += (-0.1 * up) * w; P.chest.x += 0.06 * shake * w;
+      hip.y += 0.06 * up * w;
+      P.neck.x += (0.12 * up + 0.08 * hold) * w; P.head.x += (0.06 * up) * w; P.head.z += 0.12 * Math.sin(at * 3.1) * up * w;
+      curl += (1.05 * hold - 0.5 * rel * (1 - hunch)) * w;
+      jaw += (0.2 + 0.55 * up + 0.1 * Math.abs(shake)) * w;
+      // curvada sobre o corpo
+      const hw = hunch * w;
+      P.spine1.x += 0.6 * hw; P.spine2.x += 0.3 * hw; P.chest.x += 0.15 * hw; P.neck.x += 0.3 * hw;
+      P.head.x += (0.25 + Math.max(0, Math.sin(t * 6)) * 0.12) * hw; P.head.z += Math.sin(t * 3.1) * 0.15 * hw;
+      P.upperArmL.x -= 1.1 * hw; P.upperArmR.x -= 1.1 * hw; P.forearmL.x -= 0.6 * hw; P.forearmR.x -= 0.6 * hw;
+      hip.y -= 0.42 * hw; hip.z += 0.1 * hw; curl += 0.9 * hw;
+      jaw += (0.2 + 0.2 * Math.abs(Math.sin(t * 5))) * hw;
     }
     if ((w = W('door'))) { P.upperArmR.x -= 1.45 * w; P.forearmR.x -= 0.15 * w; P.spine1.x += 0.25 * w; curl -= 0.25 * w; P.handR.x -= 0.4 * w; }
     if ((w = W('recover'))) { P.neck.x += 0.22 * w; P.spine1.x += 0.12 * w; hip.y -= 0.04 * w; jaw += (0.12 + 0.08 * Math.sin(this.brPh)) * w; }
@@ -663,6 +681,12 @@ export class CreatureAnimator {
     // abaixa ao passar por portas
     const duck = s.duck || 0;
     P.spine1.x += duck * 0.35; P.neck.x -= duck * 0.15; hip.y -= duck * 0.14;
+    // v6: no vão da porta encolhe os ombros e cola os braços no corpo (não varre o batente)
+    P.clavL.z += duck * 0.12; P.clavR.z -= duck * 0.12; P.upperArmL.z += duck * 0.16; P.upperArmR.z -= duck * 0.16;
+    // v6: peso — cada pisada desce o quadril e a caixa torácica (impacto amortecido), ombros acompanham
+    this.impact = Math.max(0, (this.impact || 0) - dt * 5.5);
+    const imp = Math.sin(Math.min(1, this.impact) * Math.PI) * (1 - rf * 0.4);
+    hip.y -= imp * 0.045; P.spine1.x += imp * 0.05; P.neck.x -= imp * 0.04; P.clavL.z -= imp * 0.05; P.clavR.z += imp * 0.05;
     // dedos (onda do indicador ao mindinho) e polegar
     for (const k of ['L', 'R']) {
       const sg = k === 'L' ? 1 : -1;
@@ -697,6 +721,15 @@ export class CreatureAnimator {
     this.m4.copy(b.hips.matrix).invert();
     for (const k of ['L', 'R']) this.solveLeg(k, this.feet[k]);
     this.first = false;
+  }
+  // v6: ponto do mundo entre as duas mãos (onde a vítima é segurada no agarrão)
+  grabPoint(out = new THREE.Vector3()) {
+    if (this.root) this.root.updateMatrixWorld(true);
+    const a = this.b.handL.getWorldPosition(new THREE.Vector3()), c = this.b.handR.getWorldPosition(new THREE.Vector3());
+    out.addVectors(a, c).multiplyScalar(0.5);
+    // um pouco à frente das palmas (o peito da vítima fica entre os dedos)
+    const fw = new THREE.Vector3(0, 0, 1).applyQuaternion(this.root ? this.root.quaternion : new THREE.Quaternion());
+    return out.addScaledVector(fw, 0.12).add(new THREE.Vector3(0, -0.12, 0));
   }
   kickStop() { if (this.spr.spine1) { this.spr.spine1.x.v += 2.6; this.spr.spine2.x.v += 1.8; this.spr.neck.x.v -= 2.2; this.spr.head.x.v -= 1.5; this.spr.upperArmL.x.v -= 3; this.spr.upperArmR.x.v -= 3; } }
   kickHear() { if (this.spr.head) { this.spr.clavL.z.v -= 2; this.spr.clavR.z.v += 2; this.spr.spine1.x.v -= 1.2; } }

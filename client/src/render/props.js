@@ -46,17 +46,100 @@ function table(g, M, w, d, h, col = 0xffffff) {
   B(g, w - 0.1, 0.08, d - 0.1, M.darkWood, 0, h - 0.09, 0, col);
   legsTable(g, M, w, d, h - 0.05, col);
 }
-function chair(g, M, x, z, ry, col) {
-  const c = new THREE.Group(); c.position.set(x, 0, z); c.rotation.y = ry; g.add(c);
-  B(c, 0.44, 0.05, 0.44, M.fabric, 0, 0.47, 0, col);
-  for (const [a, b] of [[-0.19, -0.19], [0.19, -0.19], [-0.19, 0.19], [0.19, 0.19]]) B(c, 0.04, 0.45, 0.04, M.darkWood, a, 0.225, b);
-  B(c, 0.44, 0.62, 0.05, M.darkWood, 0, 0.8, -0.2); B(c, 0.34, 0.42, 0.03, M.fabric, 0, 0.82, -0.175, col);
+// v6: cadeira de jantar entalhada — pés torneados com anéis, travessas entre os pés, assento estofado arredondado com
+// vivo, encosto com moldura, travessa superior curva e três balaústres; madeira envelhecida com desgaste nas quinas
+// (cor por vértice mais clara nas partes salientes, encardida embaixo) e arranhões (textura agedWood).
+const CHAIR_GEO = {};
+function lathe(pts, seg = 10) { const g = new THREE.LatheGeometry(pts.map(([r, y]) => new THREE.Vector2(r, y)), seg); return g; }
+function wearTint(geo, base, seed) {
+  const c = new THREE.Color(base), p = geo.attributes.position, n = p.count, a = new Float32Array(n * 3);
+  let s2 = seed; const r = () => (s2 = (s2 * 16807) % 2147483647) / 2147483647;
+  geo.computeBoundingBox(); const bb = geo.boundingBox, hy = bb.max.y - bb.min.y || 1;
+  for (let i = 0; i < n; i++) {
+    const y = (p.getY(i) - bb.min.y) / hy;
+    const k = (0.72 + 0.28 * y) * (0.88 + 0.24 * r());
+    a[i * 3] = c.r * k * 1.04; a[i * 3 + 1] = c.g * k; a[i * 3 + 2] = c.b * k * 0.95;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(a, 3)); return geo;
+}
+export function buildChair(M, col = 0x5a1416) {
+  const W = M.agedWood || M.darkWood;
+  if (!CHAIR_GEO.leg) {
+    CHAIR_GEO.leg = wearTint(lathe([[0.0, 0], [0.017, 0], [0.019, 0.02], [0.015, 0.05], [0.02, 0.1], [0.024, 0.13], [0.019, 0.16], [0.016, 0.25], [0.022, 0.29], [0.026, 0.31], [0.021, 0.34], [0.024, 0.45], [0.0, 0.45]], 10), 0x8a6a50, 3);
+    CHAIR_GEO.backPost = wearTint(lathe([[0.0, 0], [0.02, 0], [0.024, 0.05], [0.02, 0.12], [0.017, 0.4], [0.022, 0.46], [0.024, 0.5], [0.018, 0.54], [0.02, 0.6], [0.027, 0.625], [0.0, 0.645]], 10), 0x8a6a50, 5);
+    CHAIR_GEO.spindle = wearTint(lathe([[0.0, 0], [0.012, 0], [0.009, 0.05], [0.015, 0.16], [0.011, 0.26], [0.008, 0.34], [0.012, 0.38], [0.0, 0.38]], 8), 0x8a6a50, 7);
+    const rail = new THREE.BoxGeometry(0.46, 0.075, 0.035, 12, 2, 1); const rp = rail.attributes.position;
+    for (let i = 0; i < rp.count; i++) { const x = rp.getX(i) / 0.23; rp.setZ(i, rp.getZ(i) + 0.035 * x * x); rp.setY(i, rp.getY(i) * (1 + 0.35 * (1 - x * x)) + 0.012 * (1 - x * x)); }
+    rail.computeVertexNormals(); CHAIR_GEO.crest = wearTint(rail, 0x8a6a50, 9);
+  }
+  const c = new THREE.Group();
+  const add = (geo, mat, x, y, z, rx = 0, rz = 0) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.rotation.set(rx, 0, rz); m.castShadow = m.receiveShadow = true; c.add(m); return m; };
+  for (const [a, b] of [[-0.19, 0.19], [0.19, 0.19]]) add(CHAIR_GEO.leg, W, a, 0, b);
+  for (const a of [-0.19, 0.19]) { add(CHAIR_GEO.leg, W, a, 0, -0.19); add(CHAIR_GEO.backPost, W, a, 0.45, -0.195, -0.08); }
+  // travessas (caixas finas) entre os pés, perto do chão
+  for (const z of [-0.19, 0.19]) B(c, 0.36, 0.022, 0.022, W, 0, 0.13, z, 0x6a5040);
+  for (const x of [-0.19, 0.19]) B(c, 0.022, 0.022, 0.36, W, x, 0.16, 0, 0x6a5040);
+  // quadro do assento + estofado com vivo
+  B(c, 0.44, 0.05, 0.44, W, 0, 0.435, 0, 0x7a5a44);
+  RB(c, 0.42, 0.06, 0.42, 0.025, M.fabric, 0, 0.485, 0.005, col);
+  const piping = mesh(new THREE.TorusGeometry(0.205, 0.006, 4, 4), M.fabric, 0x3a0c0e); piping.rotation.set(Math.PI / 2, 0, Math.PI / 4); piping.scale.set(1.41, 1.41, 1); piping.position.y = 0.46; c.add(piping);
+  // encosto: travessa curva + travessa de baixo + 3 balaústres
+  add(CHAIR_GEO.crest, W, 0, 1.0, -0.245, -0.08);
+  B(c, 0.36, 0.035, 0.03, W, 0, 0.62, -0.205, 0x6a5040).rotation.x = -0.08;
+  for (const x of [-0.09, 0, 0.09]) add(CHAIR_GEO.spindle, W, x, 0.635, -0.213, -0.08);
   return c;
+}
+function chair(g, M, x, z, ry, col) {
+  const c = buildChair(M, col); c.position.set(x, 0, z); c.rotation.y = ry; g.add(c);
+  return c;
+}
+// v6: prato de porcelana com aba, poço, pé e friso (cor por vértice: friso azul + filete dourado)
+let PLATE_GEO = null;
+export function plateGeometry() {
+  if (PLATE_GEO) return PLATE_GEO;
+  const pts = [[0, 0.004], [0.05, 0.003], [0.052, 0.0], [0.056, 0.0], [0.06, 0.006], [0.085, 0.009], [0.098, 0.016], [0.118, 0.021], [0.124, 0.022], [0.126, 0.019], [0.12, 0.015], [0.1, 0.011], [0.088, 0.004], [0.06, 0.001], [0.0, 0.001]];
+  // perfil: superfície de cima (centro → borda) e de baixo (borda → centro); Lathe precisa de pontos ordenados
+  const top = pts.slice(0, 10).map(([r, y]) => new THREE.Vector2(r, y));
+  const g = new THREE.LatheGeometry(top.concat(pts.slice(10).map(([r, y]) => new THREE.Vector2(r, y - 0.001))), 32);
+  const p = g.attributes.position, c = new Float32Array(p.count * 3);
+  for (let i = 0; i < p.count; i++) {
+    const r = Math.hypot(p.getX(i), p.getZ(i));
+    let col = [0.92, 0.9, 0.85];
+    if (r > 0.103 && r < 0.112) col = [0.22, 0.3, 0.52];          // friso azul na aba
+    if (r > 0.119) col = [0.75, 0.6, 0.3];                         // filete dourado na borda
+    if (r > 0.058 && r < 0.064) col = [0.62, 0.6, 0.56];           // marca do poço
+    c.set(col, i * 3);
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(c, 3)); g.computeVertexNormals();
+  PLATE_GEO = g; return g;
 }
 function drawerFront(g, M, w, h, x, y, z, col) {
   const p = new THREE.Group(); p.position.set(x, y, z); g.add(p);
   B(p, w, h, 0.03, M.wood, 0, 0, 0, col); knob(g === p ? p : p, M, 0, 0, 0.025);
   return p;
+}
+// v6: caixa de gaveta ABERTA em madeira (fundo, laterais, traseira) + conteúdo opcional (caderninhos azulados,
+// boneca de pano) encostado num canto — a chave (âncora no centro) fica sempre à vista
+let drawerSeed = 1;
+function drawerBox(p, M, w, h, depth, zFront = 0, content = true) {
+  const iw = w - 0.03, ih = h - 0.025, t = 0.012, zc = zFront - depth / 2 - 0.01;
+  B(p, iw, t, depth, M.wood, 0, -ih / 2 + t / 2, zc, 0x6a4a30);                        // fundo
+  for (const sx of [-1, 1]) B(p, t, ih, depth, M.wood, sx * (iw / 2 - t / 2), 0, zc, 0x4a3020); // laterais
+  B(p, iw, ih, t, M.wood, 0, 0, zc - depth / 2 + t / 2, 0x3a2416);                      // traseira
+  if (!content) return;
+  const k = (drawerSeed = (drawerSeed * 16807) % 2147483647) % 4;
+  const y0 = -ih / 2 + t;
+  if (k === 0 || k === 2) { // caderninhos azulados empilhados num canto
+    const x = (k ? -1 : 1) * (iw / 2 - 0.09);
+    B(p, 0.14, 0.012, 0.19, M.paper, x, y0 + 0.006, zc - depth * 0.15, 0x3a4a6a).rotation.y = 0.12;
+    B(p, 0.13, 0.012, 0.18, M.paper, x + 0.01, y0 + 0.018, zc - depth * 0.15, 0x5a6a8a).rotation.y = -0.08;
+    B(p, 0.002, 0.012, 0.17, M.paper, x + 0.075, y0 + 0.018, zc - depth * 0.15, 0xd8ccaa);
+  } else if (k === 1 && ih > 0.1) { // boneca de pano deitada
+    const dx = -(iw / 2 - 0.12);
+    S(p, 0.035, M.fabric, dx, y0 + 0.03, zc - depth * 0.2 + 0.07, 0xc8b098, 1, 0.9, 1, 10);
+    S(p, 0.045, M.fabric, dx, y0 + 0.028, zc - depth * 0.2, 0x7a2a2a, 1.1, 0.6, 1.4, 10);
+    for (const s2 of [-1, 1]) { C(p, 0.012, 0.012, 0.08, M.fabric, dx + s2 * 0.025, y0 + 0.02, zc - depth * 0.2 - 0.08, 0xc8b098, 6, Math.PI / 2); }
+  }
 }
 // caixa com tampa (recipiente "prateleira"): pequena caixa de madeira sobre a prateleira
 function shelfBox(g, M, x, y, z) {
@@ -238,9 +321,7 @@ export function buildProp(kind, w, d, M, variant = 0) {
       // v4: caixa da gaveta ABERTA por cima (fundo + laterais + traseira em madeira) — antes era um bloco preto
       // maciço e, olhando de cima, aparecia a tampa dele como uma faixa cinza lisa
       { const iw = bigW - 0.04, ih = bigH - 0.03, idp = Dp - 0.08, zc = -Dp / 2 + 0.01, t = 0.012;
-        B(p, iw, t, idp, M.wood, 0, -ih / 2 + t / 2, zc, 0x6a4a30);                       // fundo
-        for (const sx of [-1, 1]) B(p, t, ih, idp, M.wood, sx * (iw / 2 - t / 2), 0, zc, 0x4a3020); // laterais
-        B(p, iw, ih, t, M.wood, 0, 0, zc - idp / 2 + t / 2, 0x3a2416);                    // traseira
+        drawerBox(p, M, bigW - 0.01, bigH, idp, -0.0, true);
         B(p, iw - 2 * t, 0.006, idp - 0.03, M.fabric, 0, -ih / 2 + t + 0.003, zc, 0x4a1a1c); } // forro de feltro
       const an = new THREE.Object3D(); an.position.set(0, -bigH / 2 + 0.04, -0.12); p.add(an); // v4: +1 cm (chave sobre o forro novo)
       // gavetinhas decorativas: 2 fileiras × 4 (ou 3 se for estreita), fixas
@@ -296,21 +377,28 @@ export function buildProp(kind, w, d, M, variant = 0) {
       if (solid) { B(g, W, H - 0.1, Dp, M.darkWood, 0, (H - 0.1) / 2 + 0.08, 0); legsTable(g, M, W, Dp, 0.1, 0xffffff, 0.04, 0.025); }
       else { legsTable(g, M, W, Dp, H - 0.04, 0xffffff, 0.04, 0.022); B(g, W - 0.06, 0.14, Dp - 0.06, M.darkWood, 0, H - 0.12, 0); }
       B(g, W + 0.04, 0.04, Dp + 0.04, M.wood, 0, H - 0.02, 0, 0x8a6040);
-      const rows = kind === 'sideboard' ? 2 : 1;
-      const cols = W > 1.2 ? 2 : 1;
-      let top = null; const drawers = [];
-      for (let rr = 0; rr < rows; rr++) for (let cc = 0; cc < cols; cc++) {
-        const dw = W / cols - 0.06, dh = solid ? Math.min(0.2, (H - 0.2) / rows - 0.04) : 0.11;
-        const y = H - 0.12 - rr * (dh + 0.05) - (solid ? 0.02 : 0);
-        const x = cols === 1 ? 0 : (cc === 0 ? -W / 4 : W / 4);
-        const p = new THREE.Group(); p.position.set(x, y, Dp / 2 + 0.005); g.add(p);
-        B(p, dw, dh, 0.03, M.wood, 0, 0, 0, 0x6a4228); knob(p, M, 0, 0, 0.025);
-        // v2: TODA gaveta tem fundo (caixa) e ponto de apoio para a chave — cada uma abre separada
-        B(p, dw - 0.04, dh - 0.03, Dp - 0.08, M.black, 0, 0, -Dp / 2 + 0.01);
+      // v6: UMA gaveta grande em cima (a única que abre — onde a chave pode estar), com caixa de madeira e conteúdo;
+      // embaixo, gavetinhas (aparador/criado-mudo) ou portinhas só visuais
+      const drawers = [];
+      { const dh = solid ? 0.2 : 0.11, dw = W - 0.08, y = H - 0.12 - (solid ? 0.02 : 0);
+        const p = new THREE.Group(); p.position.set(0, y, Dp / 2 + 0.005); g.add(p);
+        B(p, dw, dh, 0.03, M.wood, 0, 0, 0, 0x6a4228); B(p, dw - 0.05, dh - 0.05, 0.008, M.wood, 0, 0, 0.017, 0x5a3820);
+        for (const sx of (dw > 0.7 ? [-0.25, 0.25] : [0])) knob(p, M, sx * dw, 0, 0.025);
+        drawerBox(p, M, dw - 0.03, dh, Dp - 0.08, -0.0, true);
         const an = new THREE.Object3D(); an.position.set(0, -dh / 2 + 0.03, -0.1); p.add(an);
-        drawers.push({ part: p, type: 'drawer', amount: 0.3, anchor: an, label: 'gaveta' + (rows * cols > 1 ? ` ${rr * cols + cc + 1}` : '') });
-        if (!top) top = p;
+        drawers.push({ part: p, type: 'drawer', amount: 0.3, anchor: an, label: kind === 'nightstand' ? 'gaveta do criado-mudo' : 'gaveta de cima' });
+        if (solid) {
+          const y1 = y - dh / 2 - 0.04, y0b = 0.13, rowsV = kind === 'sideboard' ? 2 : 1, colsV = W > 1.2 ? 3 : W > 0.7 ? 2 : 1;
+          const rh = (y1 - y0b) / rowsV, cw = (W - 0.08) / colsV;
+          for (let rr = 0; rr < rowsV; rr++) for (let cc = 0; cc < colsV; cc++) {
+            const x = -W / 2 + 0.04 + cw * (cc + 0.5), yy = y0b + rh * (rr + 0.5);
+            B(g, cw - 0.03, rh - 0.03, 0.02, M.wood, x, yy, Dp / 2 + 0.008, 0x5e3a22);
+            B(g, cw - 0.07, rh - 0.07, 0.006, M.wood, x, yy, Dp / 2 + 0.02, 0x4e3018);
+            knob(g, M, x, yy, Dp / 2 + 0.03);
+          }
+        }
       }
+      let top = null;
       // decoração em cima
       if (kind === 'console' || kind === 'sideboard') { C(g, 0.05, 0.07, 0.25, M.porcelain, W / 2 - 0.2, H + 0.125, 0, 0x4a5a70, 10); }
       void top;
@@ -452,7 +540,11 @@ export function buildProp(kind, w, d, M, variant = 0) {
       const n = Math.floor(W / 0.7);
       for (let i = 0; i < n; i++) { const x = -W / 2 + 0.35 + i * (W - 0.7) / Math.max(1, n - 1); chair(g, M, x, Dp / 2 + 0.25, Math.PI, cloth); chair(g, M, x + 0.05, -Dp / 2 - 0.25, 0, cloth); }
       chair(g, M, W / 2 + 0.35, 0, -Math.PI / 2, cloth); chair(g, M, -W / 2 - 0.35, 0, Math.PI / 2, cloth);
-      for (let i = 0; i < n; i++) { const x = -W / 2 + 0.35 + i * (W - 0.7) / Math.max(1, n - 1); for (const sz of [-1, 1]) C(g, 0.12, 0.1, 0.015, M.porcelain, x, 0.79, sz * (Dp / 2 - 0.2), 0xe0d8c8, 16); }
+      for (let i = 0; i < n; i++) { const x = -W / 2 + 0.35 + i * (W - 0.7) / Math.max(1, n - 1); for (const sz of [-1, 1]) {
+        // v6: prato de verdade (aba, poço, pé, frisos) + garfo e faca de prata
+        const pl = new THREE.Mesh(plateGeometry(), M.porcelain); pl.position.set(x, 0.781, sz * (Dp / 2 - 0.2)); pl.castShadow = pl.receiveShadow = true; g.add(pl);
+        B(g, 0.012, 0.004, 0.17, M.iron, x - 0.16, 0.783, sz * (Dp / 2 - 0.2), 0xb8b8b8); B(g, 0.014, 0.004, 0.19, M.iron, x + 0.16, 0.783, sz * (Dp / 2 - 0.2), 0xc0c0c0);
+      } }
       // candelabro
       C(g, 0.02, 0.08, 0.3, M.brass, 0, 0.93, 0); for (const sx of [-1, 0, 1]) { C(g, 0.015, 0.015, 0.12, M.paper, sx * 0.12, 1.13, 0, 0xe8dcc0, 6); }
       B(g, W * 0.8, 0.005, 0.4, M.fabric, 0, 0.785, 0, 0x6a1a18);
@@ -503,13 +595,14 @@ export function buildProp(kind, w, d, M, variant = 0) {
       B(top, W, 0.06, Dp, M.wood, 0, 0.78, 0, 0x7a5236);
       B(top, 0.45, 0.72, Dp - 0.05, M.darkWood, -W / 2 + 0.25, 0.39, 0); B(top, 0.45, 0.72, Dp - 0.05, M.darkWood, W / 2 - 0.25, 0.39, 0);
       const drawers = [];
-      // ordem = drawerLayout('desk'): 3 linhas (de cima para baixo) × 2 colunas
-      for (const yy of [0.66, 0.45, 0.2]) for (const xx of [-W / 2 + 0.25, W / 2 - 0.25]) {
-        const p = new THREE.Group(); p.position.set(xx, yy, Dp / 2 - 0.01); top.add(p);
-        B(p, 0.38, 0.17, 0.02, M.wood, 0, 0, 0, 0x6a4228); knob(p, M, 0, 0, 0.02);
-        B(p, 0.34, 0.13, Dp - 0.12, M.black, 0, 0, -Dp / 2 + 0.05);
-        const an = new THREE.Object3D(); an.position.set(0, -0.04, -0.12); p.add(an);
-        drawers.push({ part: p, type: 'drawer', amount: 0.3, anchor: an, label: `gaveta ${drawers.length + 1} da escrivaninha` });
+      // v6: gaveta grande central (a única que abre) + gavetas visuais nos dois gaveteiros laterais
+      { const dw = W - 1.04, p = new THREE.Group(); p.position.set(0, 0.68, Dp / 2 - 0.01); top.add(p);
+        B(p, dw, 0.13, 0.02, M.wood, 0, 0, 0, 0x6a4228); knob(p, M, -0.2 * dw, 0, 0.02); knob(p, M, 0.2 * dw, 0, 0.02);
+        drawerBox(p, M, dw - 0.02, 0.13, Dp - 0.1, -0.0, true);
+        const an = new THREE.Object3D(); an.position.set(0, -0.035, -0.12); p.add(an);
+        drawers.push({ part: p, type: 'drawer', amount: 0.3, anchor: an, label: 'gaveta da escrivaninha' }); }
+      for (const yy of [0.62, 0.42, 0.2]) for (const xx of [-W / 2 + 0.25, W / 2 - 0.25]) {
+        B(top, 0.38, 0.17, 0.02, M.wood, xx, yy, Dp / 2 - 0.01, 0x6a4228); knob(top, M, xx, yy, Dp / 2 + 0.01);
       }
       B(top, 0.3, 0.02, 0.22, M.paper, 0.1, 0.82, 0.05, 0xd8ccaa).rotation.y = 0.2;
       B(top, 0.22, 0.05, 0.3, M.books, -0.3, 0.835, -0.1, 0x3a1010);

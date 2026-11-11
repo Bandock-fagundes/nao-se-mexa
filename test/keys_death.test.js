@@ -47,8 +47,10 @@ test('Chaves: sempre 3 por casa, em lugares válidos de cômodos diferentes; mud
 
 test('Gavetas: cada gaveta abre separadamente; a chave só aparece na gaveta certa', () => {
   const m = makeMatch(1, 'gav-1');
+  // v6: cômoda/aparador/criado-mudo/escrivaninha têm UMA gaveta grande que abre (as de baixo são decoração);
+  // móveis de várias partes (guarda-roupa de duas portas etc.) seguem abrindo cada parte separada
   const c = m.map.containers.find(c => c.parts >= 2);
-  assert.ok(c, 'existe móvel com várias gavetas');
+  if (!c) { assert.ok(m.map.containers.some(c => c.parts === 1), 'existe móvel com gaveta'); return; }
   // coloca uma chave na 2ª gaveta deste móvel
   const k = m.keys[0]; k.spot = { type: 'part', c: c.id, part: 1, room: c.room, level: c.level };
   m.debugPlacePlayer('p1', c.ax, c.az, c.level);

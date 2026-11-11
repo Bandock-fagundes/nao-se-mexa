@@ -43,6 +43,43 @@ if (view === 'creature') {
   cam.fov = 70; cam.updateProjectionMatrix(); cam.updateMatrixWorld(true);
   const pl = new THREE.PointLight(0xffe0c0, 2, 3); pl.position.set(0.5, 2.2, 2); scene.add(pl);
   if (q.get('close')) { const c2 = new THREE.PerspectiveCamera(30, W / H, 0.01, 10); const hp = new THREE.Vector3(); h.grip.getWorldPosition(hp); c2.position.set(hp.x + 0.25, hp.y + 0.18, hp.z + 0.25); c2.lookAt(hp); renderer.render(scene, c2); window.__done = true; throw 'done'; }
+} else if (view === 'grab') {
+  // v6: agarrão — criatura em 'kill' + colega morto sendo segurado; ?T=segundos desde a morte
+  const c = buildCreature(M); scene.add(c.root); c.root.position.set(0, 0, 0); c.root.rotation.y = 0;
+  const t = buildTeammate(M, 1); scene.add(t.root); setTeammateLOD(t, 'hi');
+  t.root.position.set(0.1, 0, 1.35); t.root.rotation.y = Math.PI; // de frente para a criatura
+  const TT = +(q.get('T') || 1), fdt = 1 / 30;
+  for (let i = 0; i < 30; i++) { c.anim.update(fdt, { anim: 'attack', animT: i * fdt, speed: 0, yaw: 0 }); animateTeammate(t, fdt, { speed: 0, alive: true, fl: true }); }
+  for (let i = 0; i < Math.round(TT / fdt); i++) {
+    c.anim.update(fdt, { anim: 'kill', animT: 0, speed: 0, yaw: 0 });
+    const tt = i * fdt;
+    animateTeammate(t, fdt, { speed: 0, alive: false, fl: false, grab: tt < 1.45 ? c.anim.grabPoint() : null, from: c.root.position.clone() });
+  }
+  console.log('grab', JSON.stringify(c.anim.grabPoint().toArray().map(v => +v.toFixed(2))));
+  if (q.get('fp')) { // primeira pessoa da vítima
+    c.root.updateMatrixWorld(true); const hb = c.bones.find(b => b.name === 'head'); const hp = new THREE.Vector3(0, 0, 0.18); hb.localToWorld(hp);
+    cam.position.copy(hp).add(new THREE.Vector3(0, -0.12, 0.62)); cam.lookAt(hp); cam.fov = 72; cam.updateProjectionMatrix();
+    const fl = new THREE.PointLight(0xfff0e0, 3, 4); fl.position.copy(cam.position).add(new THREE.Vector3(0.2, 0.15, 0)); scene.add(fl);
+  } else { cam.position.set(+(q.get('cx') || 4.2), +(q.get('cy') || 1.6), +(q.get('cz') || 1.2)); cam.lookAt(0, +(q.get('ly') || 1.2), 0.8); }
+} else if (view === 'strip') {
+  // v6: tira de quadros do andar (cada boneco é o mesmo andar em instantes diferentes, andando de verdade)
+  const N = +(q.get('N') || 6), sp = +(q.get('s') || 1.4), st = +(q.get('st') || 4), n0 = +(q.get('n') || 120), r = +(q.get('r') || Math.PI / 2);
+  const gap = +(q.get('gap') || 0.75);
+  for (let i = 0; i < N; i++) {
+    const t = buildTeammate(M, i % 4); scene.add(t.root); t.root.rotation.y = r; setTeammateLOD(t, 'hi');
+    const fx = Math.sin(r), fz = Math.cos(r); let px = 0, pz = 0;
+    const turn = +(q.get('turn') || 0);
+    for (let f = 0; f < n0 + i * st; f++) {
+      const sp2 = q.get('stop') && f > n0 * 0.6 ? 0 : sp;
+      t.root.rotation.y += turn / 60;
+      px += Math.sin(t.root.rotation.y) * sp2 / 60; pz += Math.cos(t.root.rotation.y) * sp2 / 60; t.root.position.set(px, 0, pz);
+      animateTeammate(t, 1 / 60, { speed: sp2, crouch: !!q.get('c'), alive: q.get('dead') && f > n0 * 0.5 ? false : true, fl: true, pitch: 0, from: q.get('dead') ? new THREE.Vector3(px - fx, 0, pz - fz) : null });
+    }
+    t.root.position.set((i - (N - 1) / 2) * gap, 0, 0);
+    t.root.updateMatrixWorld(true);
+  }
+  cam.position.set(+(q.get('cx') || 0), +(q.get('cy') || 1.0), +(q.get('cz') || 4.6)); cam.lookAt(+(q.get('lx') || 0), +(q.get('ly') || 0.8), 0);
+  if (q.get('fov')) { cam.fov = +q.get('fov'); cam.updateProjectionMatrix(); }
 } else if (view === 'mate') {
   const t = buildTeammate(M, +(q.get('i') || 0)); scene.add(t.root); t.root.rotation.y = +(q.get('r') || 0.6);
   const n = +(q.get('n') || 90), sp = +(q.get('s') || 0);

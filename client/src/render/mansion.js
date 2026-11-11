@@ -2,9 +2,10 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CELL, W, D, T, LEVELS, ROWS } from '../../../shared/config.js';
-import { buildProp, buildKey, buildKnockable, B, C, S, mesh, tint } from './props.js';
+import { buildProp, buildKey, buildKnockable, B, C, S, RB, mesh, tint } from './props.js';
 import { storyPainting, noteTexture, NOTES, PAINTING_TITLES, windowDrawingsTexture } from '../story.js';
 import { winSize } from './decorboxes.js';
+import { buildExterior } from './exterior.js';
 import { buildFireGlow, windowSkyMaterial, windowSkyGeometry, windowGlassMaterial, moonPatchMaterial, moonPatchGeometry } from './fx.js';
 import { SURFACE_Y } from '../../../shared/mapgen.js';
 import { makeRng } from '../../../shared/rng.js';
@@ -278,25 +279,46 @@ export function buildMansion(map, world, M) {
     const g = new THREE.Group(); g.position.set(e.x, 0, CELL / 2); levels[1].add(g);
     for (const s of [-1, 1]) B(g, 0.18, dh + 0.3, 0.6, M.darkWood, s * (half + 0.09), (dh + 0.3) / 2, 0.05);
     B(g, wdt2(half) + 0.5, 0.3, 0.6, M.darkWood, 0, dh + 0.15, 0.05);
+    // v6: folhas em madeira mais clara (destaca no hall escuro), almofadas entalhadas em relevo, dobradiças e
+    // maçanetas de latão; 3 CADEADOS de verdade (corpo arredondado dourado e brilhante, haste em U, buraco da chave)
     const leaves = [];
+    const DW = 0x8a5e3a, DWd = 0x6a4428, DWl = 0xa8764a;
     for (const side of [-1, 1]) {
       const pv = new THREE.Group(); pv.position.set(side * half, 0, -0.05); g.add(pv);
-      const lw = half - 0.01;
-      B(pv, lw, dh, 0.1, M.wood, -side * lw / 2, dh / 2, 0, 0x3a2216);
-      for (const yy of [0.3, dh / 2, dh - 0.3]) B(pv, lw, 0.08, 0.13, M.iron, -side * lw / 2, yy, 0, 0x222222);
-      S(pv, 0.05, M.brass, -side * (lw - 0.1), dh * 0.45, 0.08);
+      const lw = half - 0.01, cxl = -side * lw / 2;
+      B(pv, lw, dh, 0.07, M.wood, cxl, dh / 2, 0, DWd);                                         // miolo
+      for (const sx of [-1, 1]) B(pv, 0.12, dh, 0.1, M.wood, cxl + sx * (lw / 2 - 0.06), dh / 2, 0, DW);   // montantes
+      for (const yy of [0.1, dh * 0.42, dh * 0.62, dh - 0.09]) B(pv, lw - 0.2, yy === 0.1 ? 0.2 : 0.12, 0.1, M.wood, cxl, yy, 0, DW); // travessas
+      // almofadas em relevo (chanfro + campo) — duas de baixo, duas de cima
+      for (const [y0p, y1p] of [[0.2, dh * 0.42 - 0.06], [dh * 0.62 + 0.06, dh - 0.15]]) {
+        const ph = y1p - y0p, pw = lw - 0.3;
+        RB(pv, pw, ph, 0.05, 0.012, M.wood, cxl, y0p + ph / 2, 0.035, DWl);
+        B(pv, pw - 0.08, ph - 0.08, 0.02, M.wood, cxl, y0p + ph / 2, 0.06, DW);
+      }
+      B(pv, lw - 0.3, dh * 0.2 - 0.18, 0.04, M.wood, cxl, dh * 0.52, 0.03, DWl);                 // almofada do meio (fechadura)
+      for (const yy of [0.35, dh - 0.35]) { B(pv, 0.04, 0.22, 0.03, M.brass, side * -0.02, yy, 0.06, 0xb08a40); C(pv, 0.014, 0.014, 0.24, M.brass, side * -0.005, yy, 0.07, 0xb08a40, 8); }
+      const kx = -side * (lw - 0.1);
+      S(pv, 0.035, M.brass, kx, dh * 0.47, 0.11, 0xc8a050, 1, 1, 0.7, 14);
+      B(pv, 0.06, 0.16, 0.012, M.brass, kx, dh * 0.47, 0.055, 0xb08a40);
       leaves.push({ pv, side });
     }
-    // correntes e cadeados (um por chave necessária — escondidos conforme a coleta)
     const locks = [];
     const chain = new THREE.Group(); g.add(chain);
-    for (let i = 0; i < 9; i++) { const l = mesh(new THREE.TorusGeometry(0.05, 0.012, 6, 10), M.iron, 0x5a5650); l.position.set(-0.4 + i * 0.1, 1.2 + Math.sin(i * 0.5) * 0.05, 0.12); l.rotation.y = (i % 2) * Math.PI / 2; chain.add(l); }
-    for (let i = 0; i < 3; i++) { const lk = new THREE.Group(); lk.position.set(-0.25 + i * 0.25, 1.05, 0.15); B(lk, 0.12, 0.12, 0.05, M.brass, 0, 0, 0, 0xa08030); const sh = mesh(new THREE.TorusGeometry(0.04, 0.01, 6, 12, Math.PI), M.iron); sh.position.y = 0.06; lk.add(sh); g.add(lk); locks.push(lk); }
-    // exterior (visível quando a porta abre)
-    const out = new THREE.Group(); levels[1].add(out);
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(30, 14), new THREE.MeshStandardMaterial({ color: 0x141a12, roughness: 1 })); ground.rotation.x = -Math.PI / 2; ground.position.set(e.x, -0.02, -7); out.add(ground);
-    const sky = new THREE.Mesh(new THREE.PlaneGeometry(40, 16), new THREE.MeshBasicMaterial({ color: 0x0c1428 })); sky.position.set(e.x, 6, -12); out.add(sky);
-    const moon = new THREE.Mesh(new THREE.CircleGeometry(0.9, 24), new THREE.MeshBasicMaterial({ color: 0xdde4ff })); moon.position.set(e.x + 4, 7, -11.9); out.add(moon);
+    for (let i = 0; i < 11; i++) { const l = mesh(new THREE.TorusGeometry(0.045, 0.011, 8, 14), M.iron, 0x6a665e); l.position.set(-0.5 + i * 0.1, 1.2 + Math.sin(i * 0.45) * 0.05, 0.13); l.rotation.y = (i % 2) * Math.PI / 2; chain.add(l); }
+    const gold = M.lockGold || (M.lockGold = new THREE.MeshStandardMaterial({ color: 0xe0b048, metalness: 0.85, roughness: 0.22, emissive: 0x3a2604, emissiveIntensity: 0.6, vertexColors: true }));
+    const steel = M.lockSteel || (M.lockSteel = new THREE.MeshStandardMaterial({ color: 0xc8c8cc, metalness: 0.9, roughness: 0.28, vertexColors: true }));
+    const dark = M.lockHole || (M.lockHole = new THREE.MeshStandardMaterial({ color: 0x050403, roughness: 0.9, vertexColors: true }));
+    for (let i = 0; i < 3; i++) {
+      const lk = new THREE.Group(); lk.position.set(-0.27 + i * 0.27, 1.02 + (i === 1 ? -0.03 : 0), 0.17); lk.rotation.z = (i - 1) * 0.12;
+      RB(lk, 0.1, 0.085, 0.04, 0.014, gold, 0, 0, 0, 0xffffff);                                         // corpo
+      B(lk, 0.104, 0.01, 0.042, gold, 0, 0.03, 0, 0xd8b060); B(lk, 0.104, 0.01, 0.042, gold, 0, -0.03, 0, 0xd8b060); // frisos
+      const arc = mesh(new THREE.TorusGeometry(0.03, 0.0075, 10, 18, Math.PI), steel); arc.position.y = 0.088; lk.add(arc);  // haste em U
+      C(lk, 0.0075, 0.0075, 0.05, steel, -0.03, 0.065, 0, 0xffffff, 10); C(lk, 0.0075, 0.0075, 0.05, steel, 0.03, 0.065, 0, 0xffffff, 10);
+      const kh = mesh(new THREE.CircleGeometry(0.008, 12), dark); kh.position.set(0, 0.004, 0.0205); lk.add(kh);   // buraco da chave
+      B(lk, 0.005, 0.018, 0.002, dark, 0, -0.008, 0.0205, 0xffffff);
+      g.add(lk); locks.push(lk);
+    }
+    // v6: o exterior antigo (chão + céu em plano) saiu — agora é o lado de fora de verdade (exterior.js: estrada, postes)
     res.exit = { g, leaves, locks, chain, open: false, cur: 0, x: e.x, z: e.z };
     res.interact.push({ kind: 'exit', id: 0, level: 1, box: new THREE.Box3(new THREE.Vector3(e.x - half - 0.2, 0, 0), new THREE.Vector3(e.x + half + 0.2, dh, 0.9)) });
   }
@@ -332,7 +354,7 @@ export function buildMansion(map, world, M) {
   });
   for (let L = 0; L < 4; L++) {
     const add = (geos, mat, order) => { if (!geos.length) return; const m = new THREE.Mesh(mergeGeometries(geos, false), mat); m.renderOrder = order; m.castShadow = false; m.receiveShadow = false; levels[L].add(m); return m; };
-    add(skyGeos[L], windowSkyMaterial(), 0);
+    // v6: o céu agora é a cúpula do exterior (exterior.js) — atrás do vidro há quintal, mato e árvores de verdade
     const gl = add(glassGeos[L], windowGlassMaterial(), 3); if (gl) gl.receiveShadow = false;
     add(patchGeos[L], moonPatchMaterial(), 2);
   }
@@ -414,6 +436,8 @@ export function buildMansion(map, world, M) {
     lamp.seed = Math.random() * 100;
     res.lamps.push(lamp);
   }
+  // v6: lado de fora (quintal, mata, estrada com postes) — visto pelas janelas e pela porta de saída
+  if (typeof document !== 'undefined') { res.exterior = buildExterior(map); root.add(res.exterior.g); }
   return res;
 }
 function wdt2(h) { return h * 2; }
@@ -649,8 +673,8 @@ export function buildWindowParts(g, wdw, wi, M) {
   const sky = windowSkyGeometry(ww - 0.02, wh - 0.02, wy, z - 0.03, moon);
   // desenhos de criança colados no vidro, do lado de dentro (papel com transparência em volta)
   const vk = (wi * 7 + (wdw.room || 0) * 3) % 5 + (wdw.small ? 's' : 'b');
-  if (!drawMats.has(vk) && typeof document !== 'undefined') { const tx = windowDrawingsTexture(parseInt(vk), wdw.small); drawMats.set(vk, new THREE.MeshStandardMaterial({ map: tx, color: 0x625c52, emissive: 0x1a2236, emissiveMap: tx, emissiveIntensity: 0.5, roughness: 0.9, transparent: true, alphaTest: 0.02, depthWrite: false }) /* fosco: a lanterna de perto estourava o papel; o emissivo é o luar atravessando o papel */); }
-  if (drawMats.has(vk)) { const dm = new THREE.Mesh(new THREE.PlaneGeometry(ww - 0.06, wh - 0.06), drawMats.get(vk)); dm.position.set(0, wy, z - 0.002); dm.renderOrder = 4; g.add(dm); }
+  if (false && !drawMats.has(vk) && typeof document !== 'undefined') { const tx = windowDrawingsTexture(parseInt(vk), wdw.small); drawMats.set(vk, new THREE.MeshStandardMaterial({ map: tx, color: 0x625c52, emissive: 0x1a2236, emissiveMap: tx, emissiveIntensity: 0.5, roughness: 0.9, transparent: true, alphaTest: 0.02, depthWrite: false }) /* fosco: a lanterna de perto estourava o papel; o emissivo é o luar atravessando o papel */); }
+  if (false && drawMats.has(vk)) { const dm = new THREE.Mesh(new THREE.PlaneGeometry(ww - 0.06, wh - 0.06), drawMats.get(vk)); dm.position.set(0, wy, z - 0.002); dm.renderOrder = 4; g.add(dm); }
   // cortinas laterais (mesma medida de antes: decorboxes.windowBox)
   if (!wdw.small && !wdw.curtain && !wdw.noDrape) for (const s of [-1, 1]) {
     const geo = new THREE.PlaneGeometry(0.45, 2.4, 16, 1); const pos = geo.attributes.position;

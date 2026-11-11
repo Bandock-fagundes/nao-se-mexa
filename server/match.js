@@ -384,7 +384,7 @@ export class Match {
       const aware = ['chase', 'attack', 'alert', 'kill'].includes(c.state) || (c.detectT.has(p.id) && this.t - c.detectT.get(p.id) < AI.detectionMemory);
       if (d < CREATURE.contactDist && (aware || isPlayerMoving(p, t)) && this.world.noWallBetween(c.level, c.x, c.z, p.x, p.z)) {
         this.killPlayer(p, 'contato');
-        if (c.state === 'chase' || c.state === 'attack') { c.setState('kill', 1.9); c.killed = p.id; }
+        if (c.state !== 'kill') { c.setState('kill', 2.6); c.killed = p.id; c.path = null; }
         this.director.onEncounterEnd('morte');
       }
     }

@@ -6,9 +6,10 @@ import { generateFromParams } from '../../shared/mapgen.js';
 import { World, cellOf } from '../../shared/world.js';
 import { PLAYER, LEVELS, PHASES, CELL, T, W, D, GEN_VERSION } from '../../shared/config.js';
 import { buildMansion, LightPool, flicker } from './render/mansion.js';
+import { updateExterior } from './render/exterior.js';
 import { buildCreature } from './render/creature.js';
 import { buildHand, HandAnimator } from './render/hand.js';
-import { buildTeammate, animateTeammate } from './render/human.js';
+import { buildTeammate, animateTeammate, teammateFacing } from './render/human.js';
 import { makeBeamCone } from './render/renderer.js';
 import { buildKey } from './render/props.js';
 import { storyPainting } from './story.js';
@@ -216,9 +217,12 @@ export class Game {
     const p = this.p;
     p.alive = false; this.deathT = performance.now();
     this.deathCam = { yaw: p.yaw, pitch: p.pitch };
+    // v6: agarrão em primeira pessoa — a vítima vê o rosto da criatura enquanto é erguida, depois cai no chão
+    { const crp = this.cr.root.position; const near = this.cr.root.visible && Math.hypot(crp.x - p.x, crp.z - p.z) < 3.4;
+      this.deathGrab = near ? { x0: p.x, y0: p.y + PLAYER.eye, z0: p.z } : null; }
     this.audio.play('stinger', null, { volume: 0.8 });
     this.app.stats.deaths = (this.app.stats.deaths || 0) + 1; this.app.saveStats();
-    setTimeout(() => this.app.ui.showDeath(), 1400);
+    setTimeout(() => this.app.ui.showDeath(), this.deathGrab ? 3000 : 1400);
   }
   onEnd(m) {
     this.ended = true;
@@ -227,7 +231,9 @@ export class Game {
     if (m.result === 'win') { st.wins = (st.wins || 0) + 1; st.phases = st.phases || {}; st.phases[this.phase] = (st.phases[this.phase] || 0) + 1; }
     if (me) { st.totalSurvival = (st.totalSurvival || 0) + me.survived; st.bestSurvival = Math.max(st.bestSurvival || 0, me.survived); }
     this.app.saveStats();
-    this.app.ui.showEnd(m, this);
+    // v6: deixa a cena da morte (agarrão + queda) terminar antes do placar
+    const left = this.deathT ? (this.deathGrab ? 3200 : 1500) - (performance.now() - this.deathT) : 0;
+    if (left > 0) setTimeout(() => this.app.ui.showEnd(m, this), left); else this.app.ui.showEnd(m, this);
     this.audio.play(m.result === 'win' ? 'win' : 'stinger', null, { volume: 0.7 });
   }
   // ---------------- oclusão de som ----------------
@@ -308,13 +314,14 @@ export class Game {
     // ----- câmera -----
     const cam = R.camera;
     let camLevel = p.level;
-    if (active || (!p.alive && this.deathT && performance.now() - this.deathT < 1500 && !this.spectate)) {
+    if (active || (!p.alive && this.deathT && performance.now() - this.deathT < (this.deathGrab ? 3100 : 1500) && !this.spectate)) {
       const eye = PLAYER.eye + (PLAYER.crouchEye - PLAYER.eye) * p.crouchK;
       // balanço da câmera sincronizado com as pisadas (mais baixo no instante do passo)
       const stepPh = (p.stepN || 0) + (p.stepAcc || 0) / (p.stride || 0.75);
       this.bobW = (this.bobW || 0) + ((active && (p.speed || 0) > 0.2 ? Math.min(1, (p.speed || 0) / 2.6) : 0) - (this.bobW || 0)) * Math.min(1, dt * 6);
       const bob = -(0.5 + 0.5 * Math.cos(stepPh * Math.PI * 2)) * (p.running ? 0.045 : 0.03) * this.bobW;
-      if (!p.alive) {
+      if (!p.alive && this.deathGrab) this.grabDeathCam(cam, (performance.now() - this.deathT) / 1000);
+      else if (!p.alive) {
         const k = Math.min(1, (performance.now() - this.deathT) / 1200);
         cam.position.set(p.x, p.y + eye * (1 - k * 0.8) + 0.05, p.z);
         cam.rotation.set(this.deathCam.pitch * (1 - k) + 0.5 * k, this.deathCam.yaw, k * 1.2, 'YXZ');
@@ -339,6 +346,7 @@ export class Game {
     this.pool.update(dt, this.t, cam.position, camLevel, this.view.lamps);
     for (const lp of this.view.flickerMeshes) { const f = flicker(lp, this.t); if (lp.bulb) lp.bulb.material.emissiveIntensity = 1.6 * f; if (lp.bulbs) lp.bulbs[0].material.emissiveIntensity = 1.6 * f; }
     setFxTime(this.t); // v5: fogo, brasas, faíscas e céu das janelas
+    updateExterior(this.view.exterior, cam, this.t); // v6: céu segue a câmera; postes piscando
     for (const fl of this.view.flames) { fl.scale.y = 0.8 + 0.3 * Math.sin(this.t * 11 + fl.id) * Math.sin(this.t * 4.3 + fl.id); fl.rotation.y += dt * 0.6; }
     // ----- lanterna local -----
     const showHand = active && (!this.frozen || wk > 0.85);
@@ -391,6 +399,34 @@ export class Game {
       if (!p.alive && !deathOpen && !recent) vg.classList.remove('hurt');
       vg.style.opacity = !p.alive && !deathOpen && !recent ? '0.6' : '';
     }
+  }
+  // v6: câmera da morte com agarrão (a cabeça da criatura é lida do esqueleto animado)
+  grabDeathCam(cam, t) {
+    const G = this.deathGrab, b = this.cr.bones.find(o => o.name === 'head');
+    this.cr.root.updateMatrixWorld(true);
+    const head = new THREE.Vector3(0, 0.0, 0.18); b.localToWorld(head);
+    const crp = this.cr.root.position, fw = new THREE.Vector3(Math.sin(this.cr.root.rotation.y), 0, Math.cos(this.cr.root.rotation.y));
+    const sh = (a) => (Math.sin(t * 37 + a) * 0.6 + Math.sin(t * 23 + a * 2) * 0.4);
+    let pos;
+    if (t < 1.45) {
+      // erguido até o rosto dela: 0,55 m à frente da cabeça, um pouco abaixo, tremendo
+      const u = Math.min(1, t / 0.45), e = u * u * (3 - 2 * u);
+      const hold = head.clone().addScaledVector(fw, 0.62); hold.y -= 0.12;
+      pos = new THREE.Vector3(G.x0, G.y0, G.z0).lerp(hold, e);
+      const amp = 0.025 + 0.03 * Math.min(1, t);
+      pos.x += sh(1) * amp; pos.y += sh(2) * amp; pos.z += sh(3) * amp;
+      G.relPos = pos.clone();
+      cam.position.copy(pos); cam.up.set(0, 1, 0); cam.lookAt(head); cam.rotateZ(sh(4) * 0.06);
+    } else {
+      // solto: cai até o chão, rola de lado e fica olhando para cima, para ela
+      const u = Math.min(1, (t - 1.45) / 0.55), fall = u * u;
+      const floorY = this.p.y + 0.22;
+      const start = G.relPos || head;
+      pos = start.clone().addScaledVector(fw, 0.5 * u); pos.y = start.y + (floorY - start.y) * fall;
+      if (u >= 1) { const b2 = Math.max(0, 1 - (t - 2.0) * 6); pos.y += Math.abs(Math.sin((t - 2.0) * 18)) * 0.05 * b2; }
+      cam.position.copy(pos); cam.up.set(0, 1, 0); cam.lookAt(head); cam.rotateZ(1.15 * Math.min(1, u * 1.2));
+    }
+    this.hand.root.visible = false;
   }
   // progresso da cena de acordar (0 → 1); 1 quando não há cena
   wakeK() { if (!this.wakeCam) return this.frozen ? 0 : 1; return Math.max(0, Math.min(1, (performance.now() - this.wakeCam.t0) / this.wakeCam.dur)); }
@@ -712,6 +748,13 @@ export class Game {
       const L = cb.level, cx = cellOf(c.position.x), cz = cellOf(c.position.z);
       for (let a2 = -2; a2 <= 2 && !duck; a2++) for (let b2 = -2; b2 <= 2; b2++) { const t = this.world.cell(L, cx + a2, cz + b2); if (t === T.DOOR || (t === T.FLOOR && this.map.levels[L].room[(cz + b2) * W + cx + a2] < 0)) { duck = 1; break; } }
       this.crDuck = (this.crDuck || 0) + (duck - (this.crDuck || 0)) * Math.min(1, dt * 4);
+      // v6: o corpo da criatura (cabeça, mãos, ombros) se projeta ~0,9 m à frente da raiz e 0,55 m para os lados;
+      // o servidor só colide o centro (raio 0,42). Recuo visual suave para nunca enfiar a cabeça/mãos numa parede,
+      // janela ou porta fechada.
+      { const push = this.creatureWallPush(L, c.position.x, c.position.z, c.rotation.y);
+        this.crPush = this.crPush || { x: 0, z: 0 };
+        this.crPush.x += (push.x - this.crPush.x) * Math.min(1, dt * 10); this.crPush.z += (push.z - this.crPush.z) * Math.min(1, dt * 10);
+        c.position.x += this.crPush.x; c.position.z += this.crPush.z; }
       this.crState = cb;
       const li = (f) => (typeof ca[f] === 'number' && typeof cb[f] === 'number') ? ca[f] + (cb[f] - ca[f]) * k : undefined;
       this.cr.anim.update(dt, { anim: cb.anim, animT: cb.animT, speed: ca.speed + (cb.speed - ca.speed) * k, headYaw: ca.headYaw + (cb.headYaw - ca.headYaw) * k, headPitch: ca.headPitch + (cb.headPitch - ca.headPitch) * k, yaw: c.rotation.y, duck: this.crDuck, vx: li('vx'), vz: li('vz'), turn: li('turn') });
@@ -732,8 +775,25 @@ export class Game {
       const v = m.v;
       v.root.visible = !sp.escaped && Math.abs(sp.level - (this.camLevel ?? this.p.level)) <= 1 && !(this.spectate === sp.id && this.specFirst);
       v.root.position.set(x, y, z);
-      v.root.rotation.y = lerpA(sa.yaw, sp.yaw, k) + Math.PI;
-      animateTeammate(v, dt, { speed: m.speed, crouch: sp.crouch, alive: sp.alive, fl: sp.fl, pitch: sp.pitch });
+      // v6: o corpo vira para onde anda (sem andar de lado); a cabeça e a lanterna seguem o olhar
+      const lookYaw = lerpA(sa.yaw, sp.yaw, k);
+      m.vx = (m.vx || 0) + (((x - (m.lx ?? x)) / Math.max(dt, 1e-3)) - (m.vx || 0)) * Math.min(1, dt * 8);
+      m.vz = (m.vz || 0) + (((z - (m.lz ?? z)) / Math.max(dt, 1e-3)) - (m.vz || 0)) * Math.min(1, dt * 8);
+      m.lx = x; m.lz = z;
+      const face = sp.alive ? teammateFacing(v, lookYaw, m.vx, m.vz, dt) : { yaw: v.bodyYaw ?? lookYaw, headYaw: 0 };
+      v.root.rotation.y = face.yaw + Math.PI;
+      // v6: morte com agarrão — se a criatura está perto e matando, o corpo vai até as mãos dela; depois cai (física)
+      let grab = null, from = null;
+      if (!sp.alive) {
+        const crp = this.cr.root.position, near = this.cr.root.visible && Math.hypot(crp.x - x, crp.z - z) < 3.4 && this.crState && this.crState.anim === 'kill';
+        if (m.grabbed === undefined) m.grabbed = !!near;
+        if (m.grabbed && near) grab = this.cr.anim.grabPoint();
+        from = crp.clone();
+      } else m.grabbed = undefined;
+      const lv = sp.level, ly = LEVELS[lv] ? LEVELS[lv].y : 0;
+      animateTeammate(v, dt, { speed: m.speed, crouch: sp.crouch, alive: sp.alive, fl: sp.fl, pitch: sp.pitch, headYaw: face.headYaw, grab, from,
+        ground: (gx, gz) => this.world.floorY(lv, gx, gz),
+        solid: (gx, gy, gz) => { const c = this.world.cell(lv, cellOf(gx), cellOf(gz)); if (c === T.LOW) return gy - ly < 0.75; return c !== T.FLOOR && c !== T.STAIR && c !== T.CURTAIN && c !== T.HOLE && !(c === T.DOOR && this.world.doorOpen[this.world.doorAt(lv, cellOf(gx), cellOf(gz))]); } });
       // passos remotos
       m.stepAcc += moved;
       const stride = m.speed > 3.3 ? 0.95 : sp.crouch ? 0.55 : 0.75;
@@ -750,6 +810,16 @@ export class Game {
       }
     }
     for (; si < this.remoteSpots.length; si++) { this.remoteSpots[si].s.intensity = 0; this.remoteSpots[si].c.visible = false; }
+  }
+  // v6: deslocamento (x,z) que tira as partes salientes da criatura de dentro de paredes/portas fechadas
+  creatureWallPush(L, x, z, yaw) {
+    const fx = Math.sin(yaw), fz = Math.cos(yaw), rx = Math.cos(yaw), rz = -Math.sin(yaw);
+    const solid = (px, pz) => { const cx = cellOf(px), cz = cellOf(pz), t = this.world.cell(L, cx, cz); return t === T.WALL || t === T.VOID || t === T.TALL || ((t === T.DOOR || t === T.EXIT) && this.world.isDoorClosedCell(L, cx, cz)); };
+    let back = 0, side = 0;
+    for (let d = 0.95; d >= 0.45; d -= 0.1) for (const o of [0, -0.3, 0.3]) if (solid(x + fx * d + rx * o, z + fz * d + rz * o)) back = Math.max(back, 0.98 - d);
+    for (const sg of [-1, 1]) for (let d = 0.6; d >= 0.42; d -= 0.06) if (solid(x + rx * sg * d + fx * 0.25, z + rz * sg * d + fz * 0.25)) { side -= sg * (0.62 - d); break; }
+    back = Math.min(back, 0.5); side = Math.max(-0.2, Math.min(0.2, side));
+    return { x: -fx * back + rx * side, z: -fz * back + rz * side };
   }
   // distância (m) até a primeira superfície à frente da câmera — marcha barata pela grade (paredes, móveis
   // altos/baixos, piso e teto); 9 = nada perto

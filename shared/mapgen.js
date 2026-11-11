@@ -69,13 +69,11 @@ const TEMPLATES = {
 // Gavetas individuais (v2): quantas gavetas cada móvel tem — o cliente desenha exatamente estas.
 // wMeters = largura do móvel ao longo da parede.
 export function drawerLayout(kind, wMeters) {
-  if (kind === 'desk') return { rows: 3, cols: 2 };
   if (kind === 'reading_table') return { rows: 1, cols: 1 };
   // v3: cômoda = UMA gaveta grande em cima (a única que abre); as gavetinhas de baixo são só decoração
   if (kind === 'dresser') return { rows: 1, cols: 1 };
-  const rows = kind === 'sideboard' ? 2 : 1;
-  const cols = (wMeters - 0.08) > 1.2 ? 2 : 1;
-  return { rows, cols };
+  // v6: aparador, criado-mudo, console e escrivaninha também têm UMA gaveta grande em cima (a única que abre)
+  void wMeters; return { rows: 1, cols: 1 };
 }
 // Superfícies onde uma chave pode ficar "sobre a mesa" (altura do tampo em metros)
 export const SURFACE_Y = { desk: 0.81, dining_table: 0.79, ktable: 0.81, reading_table: 0.79, coffee_table: 0.48, side_table: 0.69, nightstand: 0.61, console: 0.86, sideboard: 0.93, dresser: 1.01, counter: 0.91 };
