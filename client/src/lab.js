@@ -4,7 +4,7 @@ import { buildMaterials } from './render/materials.js';
 import { buildCreature } from './render/creature.js';
 import { buildHand, HandAnimator } from './render/hand.js';
 import { buildProp, buildKey } from './render/props.js';
-import { buildTeammate, animateTeammate } from './render/human.js';
+import { buildTeammate, animateTeammate, setTeammateLOD, teammateTriangles, attachTeammateFlashlight } from './render/human.js';
 const q = new URLSearchParams(location.search);
 const view = q.get('v') || 'creature';
 const W = 1280, H = 720;
@@ -47,7 +47,18 @@ if (view === 'creature') {
   const t = buildTeammate(M, +(q.get('i') || 0)); scene.add(t.root); t.root.rotation.y = +(q.get('r') || 0.6);
   const n = +(q.get('n') || 90), sp = +(q.get('s') || 0);
   for (let i = 0; i < n; i++) animateTeammate(t, 1 / 60, { speed: sp, crouch: !!q.get('c'), alive: q.get('dead') ? false : true, fl: true, pitch: +(q.get('p') || 0) });
-  cam.position.set(+(q.get('cx') || 0), +(q.get('cy') || 1.2), +(q.get('cz') || 3.6)); cam.lookAt(0, +(q.get('ly') || 0.95), 0);
+  cam.position.set(+(q.get('cx') || 0), +(q.get('cy') || 1.2), +(q.get('cz') || 3.6)); cam.lookAt(+(q.get('lx') || 0), +(q.get('ly') || 0.95), +(q.get('lz') || 0));
+  if (q.get('fov')) { cam.fov = +q.get('fov'); cam.updateProjectionMatrix(); }
+  // v5: ?lod=lo força o nível baixo; &mfl=1 acende a luz da lanterna do próprio boneco; &room=1 paredes de um cômodo
+  if (q.get('lod')) setTeammateLOD(t, q.get('lod'));
+  console.log('tris hi', teammateTriangles(t, 'hi'), 'lo', teammateTriangles(t, 'lo'));
+  if (q.get('mfl')) window.__mfl = () => attachTeammateFlashlight(t, { intensity: +(q.get('mfl')) * 30, shadow: true });
+  if (q.get('room')) {
+    for (const [x, z, ry] of [[0, -2.2, 0], [-2.4, 0, Math.PI / 2], [2.4, 0, -Math.PI / 2]]) {
+      const wg = new THREE.PlaneGeometry(5, 3); wg.setAttribute('color', new THREE.Float32BufferAttribute(new Array(wg.attributes.position.count * 3).fill(1), 3));
+      const w = new THREE.Mesh(wg, M.wallGreen); w.position.set(x, 1.5, z); w.rotation.y = ry; w.receiveShadow = true; scene.add(w);
+    }
+  }
 } else {
   const g = buildProp(view, +(q.get('w') || 1.5), +(q.get('d') || 0.5), M, +(q.get('var') || 1)); scene.add(g);
   // v3: ?open=1 abre portas/gavetas; &key=1 mostra o armário da chave (vazio, chave no ganchinho)
@@ -76,5 +87,6 @@ if (q.get('mood')) {
   const lamp = new THREE.PointLight(0xffa860, 6, 10, 1.6); lamp.position.set(-2.5, 2.4, -2.5); scene.add(lamp);
   renderer.toneMappingExposure = 0.95; renderer.outputColorSpace = THREE.SRGBColorSpace;
 }
+if (window.__mfl) window.__mfl(); // depois do 'mood' (que escurece as luzes da cena)
 renderer.render(scene, cam);
 window.__done = true;
