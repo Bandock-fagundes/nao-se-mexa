@@ -14,6 +14,20 @@ const CHORDS = [
   { pad: [33, 45, 52, 53, 60], mel: [56, 57, 60, 64, 53] },      // Am(b6)
 ];
 
+// v8: tema do menu — canção de ninar original (Ré menor, 3/4). [nota MIDI ou 0 = pausa, duração em tempos]
+const LULLABY_BEAT = 0.86;
+const LULLABY = [
+  [[81, 1], [77, 1], [74, 1]], [[82, 2], [81, 1]], [[79, 1], [82, 1], [79, 1]], [[76, 2], [73, 1]],
+  [[74, 1], [77, 1], [81, 1]], [[84, 2], [81, 1]], [[82, 1], [79, 1], [77, 1]], [[76, 3]],
+  [[81, 1], [82, 1], [81, 1]], [[77, 2], [74, 1]], [[79, 1], [77, 1], [76, 1]], [[77, 2], [74, 1]],
+  [[82, 1], [81, 1], [79, 1]], [[77, 1], [76, 1], [73, 1]], [[74, 3]], [[0, 3]],
+];
+// acorde de cada compasso: [raiz, quinta, terça] (graves)
+const LULLABY_CHORDS = [
+  [50, 57, 53], [46, 53, 50], [43, 50, 46], [45, 52, 49], [50, 57, 53], [41, 48, 45], [43, 50, 46], [45, 52, 49],
+  [50, 57, 53], [46, 53, 50], [43, 50, 46], [50, 57, 53], [43, 50, 46], [45, 52, 49], [50, 57, 53], [50, 57, 53],
+];
+
 export class Music {
   constructor(engine) {
     this.e = engine; this.ready = false; this.want = 'none'; this.mode = 'none';
@@ -68,10 +82,11 @@ export class Music {
   apply() {
     if (this.want === this.mode) return;
     this.mode = this.want;
-    if (this.layer) this.killLayer(this.layer);
+    if (this.layer) { if (this.layer.kind === 'menu') this.layer.fade = 2.6; this.killLayer(this.layer); }
     this.layer = null;
     if (this.mode === 'none') return;
     const L = this.newLayer();
+    L.kind = this.mode;
     this.layer = L;
     if (this.mode === 'menu') this.startMenu(L);
     else if (this.mode === 'loading') this.startLoading(L);
@@ -91,7 +106,7 @@ export class Music {
   }
   killLayer(L) {
     const t = this.now;
-    for (const p of [L.g.gain, L.wet.gain]) { p.cancelScheduledValues(t); p.setValueAtTime(Math.max(0.0001, p.value), t); p.exponentialRampToValueAtTime(0.0001, t + 1.6); }
+    for (const p of [L.g.gain, L.wet.gain]) { p.cancelScheduledValues(t); p.setValueAtTime(Math.max(0.0001, p.value), t); p.exponentialRampToValueAtTime(0.0001, t + (L.fade || 1.6)); }
     L.dead = true;
     setTimeout(() => { for (const n of L.nodes) { try { n.stop(); } catch { } try { n.disconnect(); } catch { } } try { L.g.disconnect(); L.wet.disconnect(); } catch { } }, 5000);
   }
@@ -137,14 +152,29 @@ export class Music {
   }
 
   // ---------------- MENU ----------------
+  // v8: canção de ninar ORIGINAL para caixinha de música (Ré menor, 3/4, ~70 bpm) sobre cordas graves e drone.
+  // Ciclo de 16 compassos (~41 s): 1ª vez na caixinha; 2ª vez o piano canta a melodia uma oitava abaixo e a
+  // caixinha só pontua; no fim da 2ª a caixinha "perde a corda" (desacelera e desafina) e recomeça.
   startMenu(L) {
-    // drone grave (Lá1 + Mi2) com filtro respirando
-    const lp = this.filt('lowpass', 165, 1.2); const dg = this.gain(0.17, L.bus); lp.connect(dg);
-    this.osc(L, 'sawtooth', A(33), lp, -6); this.osc(L, 'sawtooth', A(33), lp, 7); this.osc(L, 'sine', A(40), lp);
-    const tri = this.gain(0.018, L.wetBus); this.osc(L, 'sine', A(51), tri, 3); this.lfo(L, 0.03, 0.016, tri.gain); // trítono (Ré#) que entra e sai
-    this.lfo(L, 0.05, 90, lp.frequency);
-    const air = this.filt('bandpass', 420, 0.6); const ag = this.gain(0.035, L.wetBus); air.connect(ag); this.noiseLoop(L, this.e.pink, air);
-    this.lfo(L, 0.08, 0.025, ag.gain);
+    const lp = this.filt('lowpass', 150, 1.1); const dg = this.gain(0.11, L.bus); lp.connect(dg);
+    this.osc(L, 'sawtooth', A(38), lp, -6); this.osc(L, 'sawtooth', A(38), lp, 7); this.osc(L, 'sine', A(45), lp); // Ré1 + Lá1
+    this.lfo(L, 0.045, 60, lp.frequency);
+    const air = this.filt('bandpass', 380, 0.6); const ag = this.gain(0.022, L.wetBus); air.connect(ag); this.noiseLoop(L, this.e.pink, air);
+    this.lfo(L, 0.07, 0.015, ag.gain);
+    L.bar = 0; L.cycle = 0; L.nextBar = this.now + 0.6;
+  }
+  // caixinha de música: lâmina de metal (fundamental + parciais inarmônicas, ataque seco, cauda curta) e um "tic" mecânico
+  musicBox(t, f, vel, dest, detuneCents = 0) {
+    const c = this.c; const k = Math.pow(2, detuneCents / 1200);
+    const out = c.createGain(); out.gain.value = vel; out.connect(dest);
+    for (const [m, g, dec] of [[1, 1, 1.9], [2.0, 0.18, 0.9], [4.16, 0.22, 0.45], [6.9, 0.08, 0.22], [9.7, 0.04, 0.12]]) {
+      const o = c.createOscillator(); o.type = 'sine'; o.frequency.value = f * m * k; o.detune.value = (Math.random() - 0.5) * 6;
+      const e = c.createGain(); e.gain.setValueAtTime(0, t); e.gain.linearRampToValueAtTime(g, t + 0.003); e.gain.setTargetAtTime(0, t + 0.003, dec / 3.2);
+      o.connect(e); e.connect(out); o.start(t); o.stop(t + dec * 1.7 + 0.1);
+    }
+    const n = c.createBufferSource(); n.buffer = this.e.white; const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 5200;
+    const ng = c.createGain(); ng.gain.setValueAtTime(0.05, t); ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.012);
+    n.connect(hp); hp.connect(ng); ng.connect(out); n.start(t, Math.random()); n.stop(t + 0.02);
   }
   // ---------------- CARREGANDO ----------------
   startLoading(L) {
@@ -184,21 +214,32 @@ export class Music {
     const now = this.now, ahead = now + 0.35;
     const dt = 0.09;
     if (this.mode === 'menu') {
-      while (L.nextChord < ahead) {
-        const ch = CHORDS[L.chord % 4]; const t = L.nextChord;
-        for (const n of ch.pad) this.strings(t, A(n), 7.2, 0.022, L.wetBus, 2.6, 820);
-        L.chord++; L.nextChord += 8;
-        L.curMel = ch.mel;
-      }
-      while (L.next < ahead) {
-        const t = L.next; L.beat++;
-        const mel = L.curMel || CHORDS[0].mel;
-        if (L.beat % 4 === 1 || Math.random() < 0.38) {
-          const n = mel[Math.floor(Math.random() * mel.length)];
-          this.piano(t, A(n), 0.09 + Math.random() * 0.04, L.wetBus);
-          if (Math.random() < 0.2) this.piano(t + 0.5, A(n - 12), 0.07, L.wetBus);
+      while (L.nextBar < ahead) {
+        const bi = L.bar % 16, cyc = L.cycle % 2, t = L.nextBar;
+        // a corda acabando: os 2 últimos compassos do 2º ciclo desaceleram e desafinam
+        const wind = cyc === 1 && bi >= 14 ? (bi - 13) / 3 : 0;
+        const beat = LULLABY_BEAT * (1 + wind * 0.9), det = -wind * 38;
+        const ch = LULLABY_CHORDS[bi];
+        // cordas graves: raiz + quinta (+ terça no meio), pedal longo por compasso
+        for (const [n, g] of [[ch[0] - 12, 0.026], [ch[0], 0.02], [ch[1], 0.014]]) this.strings(t, A(n), beat * 3 - 0.2, g, L.wetBus, 1.4, 620);
+        // piano: baixo no 1º tempo
+        this.piano(t, A(ch[0] - 12), 0.11, L.wetBus);
+        if (cyc === 1 && bi % 2 === 1) this.piano(t + beat, A(ch[2]), 0.05, L.wetBus);
+        let bt = 0;
+        for (const [n, d] of LULLABY[bi]) {
+          const tt = t + bt * beat + (Math.random() - 0.5) * 0.02;
+          if (n) {
+            if (cyc === 0) this.musicBox(tt, A(n), 0.075 + Math.random() * 0.015, L.wetBus, det);
+            else {
+              this.piano(tt, A(n - 12), 0.085 + Math.random() * 0.02, L.wetBus);
+              if (bt === 0 && bi % 4 === 0) this.musicBox(tt + beat * 0.5, A(n + 12), 0.035, L.wetBus, det); // eco agudo
+              if (wind) this.musicBox(tt, A(n), 0.06, L.wetBus, det);
+            }
+          }
+          bt += d;
         }
-        L.next += 1.4 + (Math.random() < 0.35 ? 1.4 : 0);
+        L.bar++; L.nextBar += beat * 3;
+        if (bi === 15) { L.cycle++; L.nextBar += cyc === 1 ? 2.6 : 0.4; } // respira antes de recomeçar
       }
     } else if (this.mode === 'loading') {
       while (L.next < ahead) {

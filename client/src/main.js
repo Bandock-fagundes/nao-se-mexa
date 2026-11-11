@@ -45,8 +45,14 @@ app.input = new Input($('#stage'));
 window.__app = app;
 
 // ---------------- telas ----------------
+// v8: telas do menu com fundo 3D (sala de jantar) atrás; troca de tela com fade (a anterior sai por cima, sem cliques)
+const MENU_SCREENS = new Set(['menu', 'mode', 'lobby', 'settings', 'tutorial', 'credits']);
 function show(id) {
-  $$('.screen').forEach(s => s.classList.remove('on'));
+  const prevEl = app.screen ? $('#' + app.screen) : null;
+  $$('.screen').forEach(s => s.classList.remove('on', 'out'));
+  if (prevEl && prevEl.id !== id && prevEl.id !== 'loading' && id !== 'loading' && id && !isE2E) {
+    prevEl.classList.add('out'); clearTimeout(prevEl._outT); prevEl._outT = setTimeout(() => prevEl.classList.remove('out'), 420);
+  }
   if (id) $('#' + id).classList.add('on');
   const prev = app.screen;
   app.screen = id;
@@ -56,7 +62,30 @@ function show(id) {
   if (id === 'menu') renderStats();
   if (id === 'settings') fillSettings();
   if (id === 'mode' || id === 'lobby') mountLook(id);
+  updateMenuBack();
 }
+// fundo 3D do menu: liga só com uma tela do menu aberta e fora da partida; desligado em e2e/webdriver (salvo ?menu3d=1)
+const menu3dOn = params.get('menu3d') === '1' || (!isE2E && params.get('menu3d') !== '0');
+function updateMenuBack() {
+  const on = MENU_SCREENS.has(app.screen) && !app.game && !app.introRunning;
+  $('#menuBack').classList.toggle('off', !(MENU_SCREENS.has(app.screen) && !app.game));
+  if (!menu3dOn) return;
+  if (on && !app.menuScene && !app.menuSceneLoading) {
+    app.menuSceneLoading = true;
+    const go = () => import('./menuScene.js').then(({ MenuScene }) => {
+      try {
+        const ms = new MenuScene($('#menuCanvas')); ms.build();
+        ms.onFirstFrame = () => $('#menuBack').classList.add('has3d');
+        app.menuScene = window.__menuScene = ms; updateMenuBack();
+      } catch (e) { console.warn('fundo 3D do menu indisponível', e); }
+    });
+    (window.requestIdleCallback || ((f) => setTimeout(f, 200)))(go, { timeout: 900 });
+    return;
+  }
+  const ms = app.menuScene; if (!ms) return;
+  if (on && !document.hidden) ms.start(); else ms.stop();
+}
+document.addEventListener('visibilitychange', () => updateMenuBack());
 // trilha conforme a tela
 function updateMusic() {
   if (app.introRunning || app.wakeRunning) return app.music.setMode('none');
@@ -490,11 +519,12 @@ function renderDiag() {
 
 // ---------------- início ----------------
 // a 1ª interação desbloqueia o som e começa o tema do menu
-const firstGesture = () => { app.audio.init(); updateMusic(); };
+const firstGesture = () => { app.audio.init(); updateMusic(); $('#menuSound').classList.add('gone'); };
+if (isE2E && !params.has('menu3d')) document.body.classList.add('e2e');
 window.addEventListener('pointerdown', firstGesture, { once: true }); window.addEventListener('keydown', firstGesture, { once: true });
 if (shouldShowIntro(params, isTest)) {
   app.introRunning = true;
-  runIntro(app.audio).then(() => { app.introRunning = false; updateMusic(); });
+  runIntro(app.audio).then(() => { app.introRunning = false; updateMusic(); updateMenuBack(); });
 }
 show(isTest ? 'testar' : 'menu');
 if (params.get('sala')) {

@@ -18,24 +18,34 @@
       <div class="wk-text"><div class="wk-l1"></div><div class="wk-rule"></div><div class="wk-l2"></div></div>
       <div class="wk-wait">Aguardando os outros jogadores acordarem…</div>
     </div>
+    <!-- ===== v8: FUNDO DO MENU (cena 3D da sala de jantar + véu, vinheta e granulação) — atrás de todas as telas do menu ===== -->
+    <div id="menuBack" aria-hidden="true">
+      <div class="mb-fallback"></div>
+      <canvas id="menuCanvas"></canvas>
+      <div class="mb-shade"></div>
+      <div class="mb-grain"></div>
+    </div>
     <!-- ===== MENU ===== -->
     <section id="menu" class="screen">
-      <div class="menu-bg"></div>
       <div class="menu-inner">
-        <h1 class="title">NÃO SE MEXA!</h1>
-        <div class="beta" title="Versão beta">BETA</div>
+        <header class="title-block">
+          <h1 class="title" data-text="NÃO SE MEXA!">NÃO SE MEXA!</h1>
+          <div class="beta" title="Versão beta"><i></i><span>VERSÃO BETA</span><i></i></div>
+        </header>
         <p class="subtitle">Ela enxerga quem se move. Depois, ela escuta. Por fim, ela fareja.</p>
         <nav class="menu-buttons">
-          <button data-go="mode" data-mode="solo">Jogar</button>
-          <button data-go="mode" data-mode="multi">Multiplayer</button>
-          <button data-go="tutorial">Tutorial</button>
-          <button data-go="settings">Configurações</button>
-          <button data-go="credits">Créditos</button>
-          <a class="btn ghost" href="/testar">TESTAR JOGO</a>
-          <button data-action="home" class="ghost">Voltar à tela inicial</button>
+          <button class="mi" data-go="mode" data-mode="solo"><span>Jogar</span></button>
+          <button class="mi" data-go="mode" data-mode="multi"><span>Multiplayer</span></button>
+          <button class="mi" data-go="tutorial"><span>Tutorial</span></button>
+          <button class="mi" data-go="settings"><span>Configurações</span></button>
+          <button class="mi" data-go="credits"><span>Créditos</span></button>
+          <a class="btn ghost mi mi-small mi-test" href="/testar"><span>TESTAR JOGO</span></a>
+          <button data-action="home" class="ghost mi mi-small"><span>Voltar à tela inicial</span></button>
         </nav>
         <div id="stats" class="stats"></div>
       </div>
+      <div class="menu-corner"><b>BETA</b> · v0.8</div>
+      <div class="menu-sound" id="menuSound">♪ toque em qualquer lugar para ouvir a música</div>
     </section>
     <!-- ===== SELEÇÃO DE MODO ===== -->
     <section id="mode" class="screen panel-screen">
