@@ -163,11 +163,11 @@ function geometries() {
       foot: blob(q.ball[0] + 3, q.ball[1] + 1, footShape),
       toe: blob(q.ball[0] + 1, q.ball[1], toeShape),
       // coxa: quadríceps volumoso na frente, sulcos entalhados nas pontas
-      thigh: turned(0.4, prof([[0, 0.07], [0.18, 0.081], [0.55, 0.068], [1, 0.047]], q.hand ? [[0.08, 0.02, 0.06], [0.93, 0.02, 0.07]] : []), { seg: L, rings: R, sz: 0.95, zOff: t => 0.008 * Math.sin(t * Math.PI) }),
+      thigh: turned(0.345, prof([[0, 0.07], [0.18, 0.081], [0.55, 0.068], [1, 0.047]], q.hand ? [[0.08, 0.02, 0.06], [0.93, 0.02, 0.07]] : []), { seg: L, rings: R, sz: 0.95, zOff: t => 0.008 * Math.sin(t * Math.PI) }),
       // panturrilha: barriga atrás (z−) no terço superior
-      calf: turned(0.38, prof([[0, 0.048], [0.22, 0.056], [0.6, 0.042], [1, 0.032]], q.hand ? [[0.07, 0.02, 0.06], [0.93, 0.02, 0.07]] : []), { seg: L, rings: R, sz: 1.05, zOff: t => -0.012 * Math.sin(Math.min(1, t * 1.6) * Math.PI) }),
-      upperArm: turned(0.25, prof([[0, 0.046], [0.38, 0.05], [0.7, 0.042], [1, 0.035]], q.hand ? [[0.1, 0.025, 0.06], [0.92, 0.025, 0.07]] : []), { seg: L, rings: R, sx: 0.95, zOff: t => 0.005 * Math.sin(t * Math.PI) }),
-      forearm: turned(0.225, prof([[0, 0.037], [0.22, 0.042], [0.7, 0.031], [1, 0.025]], q.hand ? [[0.08, 0.025, 0.07], [0.92, 0.025, 0.08]] : []), { seg: L, rings: R, sx: 1.18, sz: 0.92 }),
+      calf: turned(0.335, prof([[0, 0.048], [0.22, 0.056], [0.6, 0.042], [1, 0.032]], q.hand ? [[0.07, 0.02, 0.06], [0.93, 0.02, 0.07]] : []), { seg: L, rings: R, sz: 1.05, zOff: t => -0.012 * Math.sin(Math.min(1, t * 1.6) * Math.PI) }),
+      upperArm: turned(0.212, prof([[0, 0.046], [0.38, 0.05], [0.7, 0.042], [1, 0.035]], q.hand ? [[0.1, 0.025, 0.06], [0.92, 0.025, 0.07]] : []), { seg: L, rings: R, sx: 0.95, zOff: t => 0.005 * Math.sin(t * Math.PI) }),
+      forearm: turned(0.192, prof([[0, 0.037], [0.22, 0.042], [0.7, 0.031], [1, 0.025]], q.hand ? [[0.08, 0.025, 0.07], [0.92, 0.025, 0.08]] : []), { seg: L, rings: R, sx: 1.18, sz: 0.92 }),
       neck: turned(0.1, prof([[0, 0.045], [0.5, 0.04], [1, 0.044]], q.hand ? [[0.5, 0.06, 0.05]] : []), { seg: L, rings: Math.max(4, Math.round(R / 2)) }),
       ball: new THREE.SphereGeometry(1, q.ball[0], q.ball[1]),
       small: new THREE.SphereGeometry(1, q.small[0], q.small[1]),
@@ -209,7 +209,7 @@ function materials() {
   MAT = {
     body: wood(0x7a5a40, 1.0, 0.55),     // nogueira tingida (escura → silhueta legível contra a lanterna)
     head: wood(0x80603f, 1.0, 0.5),
-    joint: wood(0xb48e66, 0.85, 0.4),    // juntas um tom mais claro: articulações bem marcadas
+    joint: wood(0x5a4030, 0.95, 0.45),   // v6b: juntas DISCRETAS — mesma madeira, um tom mais escuro (nada de bolas claras)
     pin: new THREE.MeshStandardMaterial({ color: 0x8a6a34, roughness: 0.38, metalness: 0.85 }),
     flBody: new THREE.MeshStandardMaterial({ color: 0x26272b, metalness: 0.45, roughness: 0.42 }),
     flGrip: new THREE.MeshStandardMaterial({ color: 0x111113, metalness: 0.1, roughness: 0.8 }),
@@ -232,10 +232,7 @@ function both(t, parent, key, mat, pos, scale, rot) { const G = geometries(); fo
 function ballJoint(t, parent, r, pos, axis = null, scale = null) {
   const G = geometries(), Mt = materials(), key = r < 0.04 ? 'small' : 'ball';
   for (const lv of ['hi', 'lo']) piece(t, parent, lv, G[lv][key], Mt.joint, pos, scale ? scale.clone().multiplyScalar(r) : V(r, r, r));
-  if (axis) { // pino de latão atravessando a junta (dobradiça) — só no nível alto
-    const q = new THREE.Quaternion().setFromUnitVectors(V(0, 1, 0), axis);
-    for (const sgn of [-1, 1]) { const m = piece(t, parent, 'hi', G.pinHead, Mt.pin, pos.clone().addScaledVector(axis, sgn * r * 0.93), V(r * 0.3, r * 0.14, r * 0.3)); m.quaternion.copy(q); }
-  }
+  void axis; // v6b: sem pinos de latão (as juntas ficam discretas, só a bola escura na fresta entre os segmentos)
 }
 // falange torneada leve (compartilhada por comprimento/raio), ao longo de a → b
 const PHAL = new Map();
@@ -279,17 +276,16 @@ export function buildTeammate(M, idx = 0) {
   // pernas: junta esférica do quadril → coxa → joelho (dobradiça + patela) → panturrilha → tornozelo → pé
   for (const s of [-1, 1]) {
     const hip = grp(pelvis, s * 0.09, -0.04, 0);
-    ballJoint(t, hip, 0.064, V(0, 0, 0));
-    both(t, hip, 'thigh', Mt.body, V(0, -0.02, 0));
+    ballJoint(t, hip, 0.056, V(0, 0, 0));
+    both(t, hip, 'thigh', Mt.body, V(0, -0.04, 0));                   // coxa: -0,04 … -0,385 (fresta até o joelho)
     const knee = grp(hip, 0, -0.42, 0);
-    ballJoint(t, knee, 0.048, V(0, 0, 0), V(1, 0, 0));
-    piece(t, knee, 'hi', G.hi.small, Mt.joint, V(0, 0.004, 0.036), V(0.03, 0.036, 0.016));            // patela
-    both(t, knee, 'calf', Mt.body, V(0, -0.025, 0));
+    ballJoint(t, knee, 0.04, V(0, 0, 0), V(1, 0, 0));
+    both(t, knee, 'calf', Mt.body, V(0, -0.042, 0));                   // canela: -0,042 … -0,377 (fresta até o tornozelo)
     const ankle = grp(knee, 0, -0.42, 0);
-    ballJoint(t, ankle, 0.034, V(0, 0, 0), V(1, 0, 0));
+    ballJoint(t, ankle, 0.03, V(0, 0, 0), V(1, 0, 0));
     both(t, ankle, 'foot', Mt.body);
     const toe = grp(ankle, 0, -0.045, 0.1);
-    piece(t, toe, 'hi', G.hi.small, Mt.joint, V(0, 0, 0), V(0.04, 0.014, 0.014));
+    piece(t, toe, 'hi', G.hi.small, Mt.joint, V(0, 0, 0), V(0.036, 0.012, 0.012));
     both(t, toe, 'toe', Mt.body);
     parts['hip' + s] = hip; parts['knee' + s] = knee; parts['ankle' + s] = ankle; parts['toe' + s] = toe;
   }
@@ -315,14 +311,14 @@ export function buildTeammate(M, idx = 0) {
     piece(t, clav, 'hi', G.hi.small, Mt.joint, V(s * 0.02, 0.0, 0.012), V(0.018, 0.018, 0.018));
     parts['clav' + s] = clav;
     const sh = grp(clav, s * 0.155, -0.04, 0);
-    ballJoint(t, sh, 0.056, V(s * 0.004, 0, 0), null, V(1.05, 1, 1));
-    both(t, sh, 'upperArm', Mt.body, V(0, -0.03, 0));
+    ballJoint(t, sh, 0.05, V(s * 0.004, 0, 0), null, V(1.05, 1, 1));
+    both(t, sh, 'upperArm', Mt.body, V(0, -0.038, 0));               // braço: -0,038 … -0,25 (fresta até o cotovelo)
     const el = grp(sh, 0, -0.28, 0);
-    ballJoint(t, el, 0.037, V(0, 0, 0), V(1, 0, 0));
-    both(t, el, 'forearm', Mt.body, V(0, -0.02, 0.005));
+    ballJoint(t, el, 0.032, V(0, 0, 0), V(1, 0, 0));
+    both(t, el, 'forearm', Mt.body, V(0, -0.034, 0.005));            // antebraço: -0,034 … -0,226 (fresta até o punho)
     const wr = grp(el, 0, -0.26, 0.01);
-    ballJoint(t, wr, 0.023, V(0, 0, 0), V(0, 0, 1));
-    const hd = carvedHand(t, wr, s, s < 0); hd.position.y = -0.006;
+    ballJoint(t, wr, 0.02, V(0, 0, 0), V(0, 0, 1));
+    const hd = carvedHand(t, wr, s, s < 0); hd.position.y = -0.016;
     parts['sh' + s] = sh; parts['el' + s] = el; parts['wr' + s] = wr;
   }
   // braçadeira na cor do jogador (lê de costas também)
@@ -613,7 +609,7 @@ export function animateTeammate(t, dt, s) {
   P['clav1'].rotation.y = k('clLy', -cL * 0.06 * w, 10, 0.7);
   P['sh1'].rotation.x = k('shL', cL * armA - cr * 0.35 - run * 0.15, 9, 0.6);
   P['sh1'].rotation.z = k('shLz', 0.09 + run * 0.12 + cr * 0.05, 9, 0.6);
-  P['el1'].rotation.x = k('elL', -0.22 - Math.max(0, -cL) * 0.35 * w - run * 1.0 - cr * 0.5, 9, 0.55);
+  P['el1'].rotation.x = k('elL', -0.4 - Math.max(0, -cL) * 0.45 * w - run * 1.0 - cr * 0.5, 9, 0.55);
   P['wr1'].rotation.x = k('wrL', 0.1 + 0.1 * w, 9, 0.6);
   // braço direito aponta a lanterna para onde a cabeça olha (compensa a torção do tronco)
   P['sh-1'].rotation.x = k('shR', -0.62 - pitch * 0.7 - t.spine.rotation.x - t.pelvis.rotation.x + 0.04 * cL * w, 10, 0.6);

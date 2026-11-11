@@ -288,8 +288,8 @@ function buildGeometry() {
       pt(V(s * 0.5, 1.02, 0.465), 0.044, one('hand' + k), 1.55, 0.55),
       pt(V(s * 0.5, 0.965, 0.474), 0.046, one('hand' + k), 1.6, 0.5),
     ], { radial: 18, sub: 7, noise: 0.005, rScale: 0.78, extra: (a, u, p, d, r0) => (u > 0.1 && u < 0.8 ? sinew(a, u, p, d, r0) : 0) });
-    // cotovelo ósseo e pulso
-    { const g = new THREE.SphereGeometry(0.032, 12, 10); g.scale(1, 1.3, 1); g.translate(s * 0.47, 1.84, 0.3); skin.rigid(g, BI['forearm' + k]); }
+    // cotovelo ósseo e pulso (v6b: menor e mais afundado — junta discreta)
+    { const g = new THREE.SphereGeometry(0.027, 12, 10); g.scale(1, 1.25, 1); g.translate(s * 0.47, 1.84, 0.315); skin.rigid(g, BI['forearm' + k]); }
     // dedos longos e ossudos: 2 falanges articuladas com nós salientes + garras curvas escuras
     for (let f = 0; f < 4; f++) {
       const K = knuckle(s, f), M = midJoint(s, f), T = tipPt(s, f);
@@ -327,7 +327,7 @@ function buildGeometry() {
       pt(V(s * 0.215, 0.2, 0.0), 0.037, one('foot' + k)),
       pt(V(s * 0.22, 0.07, 0.12), 0.042, mix('foot' + k, 'toes' + k, 0.4), 1.3, 0.8),
     ], { radial: 18, sub: 7, noise: 0.007, rScale: 0.8, extra: (a, u, p, d, r0) => (u > 0.05 && u < 0.85 ? sinew(a, u, p, d, r0) * 0.8 : 0) });
-    { const g = new THREE.SphereGeometry(0.045, 12, 10); g.translate(s * 0.2, 0.96, 0.31); skin.rigid(g, BI['shin' + k]); }
+    { const g = new THREE.SphereGeometry(0.038, 12, 10); g.translate(s * 0.2, 0.96, 0.315); skin.rigid(g, BI['shin' + k]); }
     { const g = new THREE.SphereGeometry(0.03, 10, 8); g.scale(1, 1, 1.3); g.translate(s * 0.21, 0.37, -0.15); skin.rigid(g, BI['foot' + k]); } // calcanhar (jarrete)
     for (let t = -1; t <= 1; t++) {
       const tx = s * 0.22 + t * 0.04;
