@@ -14,25 +14,42 @@ const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t
 const wrapA = (d) => { while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; return d; };
 
 // ---------- esqueleto (pose de ligação, coordenadas do mundo, criatura olhando +Z) ----------
+// v9: coluna em 4 segmentos (spine1, spine2, spine3, chest) e pescoço em 2 (neck, neck2) — a ondulação sobe
+// vértebra por vértebra; dedos com 3 falanges; as FILHAS fundidas ao tronco: dois rostinhos meio enterrados na pele
+// (kidHeadA no peito, kidHeadB nas costas) e dois braços pequenos (kidA no flanco esquerdo, kidB nas costas, à
+// direita), com ombro, cotovelo e punho próprios. Pontos costurados em volta de cada emenda.
 const J = {
-  root: V(0, 0, 0), hips: V(0, 1.62, -0.05), spine1: V(0, 1.88, 0.0), spine2: V(0, 2.15, 0.1), chest: V(0, 2.4, 0.22),
-  neck: V(0, 2.62, 0.36), head: V(0, 2.8, 0.5),
+  root: V(0, 0, 0), hips: V(0, 1.62, -0.05), spine1: V(0, 1.88, 0.0), spine2: V(0, 2.15, 0.1), spine3: V(0, 2.28, 0.16), chest: V(0, 2.4, 0.22),
+  neck: V(0, 2.62, 0.36), neck2: V(0, 2.71, 0.43), head: V(0, 2.8, 0.5),
 };
 const BONES = [
-  ['root', null, J.root], ['hips', 'root', J.hips], ['spine1', 'hips', J.spine1], ['spine2', 'spine1', J.spine2], ['chest', 'spine2', J.chest],
-  ['neck', 'chest', J.neck], ['head', 'neck', J.head],
+  ['root', null, J.root], ['hips', 'root', J.hips], ['spine1', 'hips', J.spine1], ['spine2', 'spine1', J.spine2], ['spine3', 'spine2', J.spine3], ['chest', 'spine3', J.chest],
+  ['neck', 'chest', J.neck], ['neck2', 'neck', J.neck2], ['head', 'neck2', J.head],
   ['jawL', 'head', V(0.045, 2.72, 0.66)], ['jawR', 'head', V(-0.045, 2.72, 0.66)],
 ];
+// filhas: ombro → cotovelo → punho (posições de ligação, ajustadas à superfície do tronco em buildGeometry)
+const KID = {
+  A: { parent: 'spine2', sh: V(0.14, 2.05, 0.37), d1: V(0.55, -0.45, 0.7), d2: V(0.12, -0.6, 0.8), n: V(0.71, -0.49, 0.52) },
+  B: { parent: 'spine3', sh: V(-0.13, 2.29, -0.12), d1: V(-0.6, -0.3, -0.7), d2: V(-0.25, -0.8, -0.45), n: V(-0.74, 0, -0.68) },
+};
+for (const k in KID) { const q = KID[k]; q.el = q.sh.clone().addScaledVector(q.d1.normalize(), 0.23); q.wr = q.el.clone().addScaledVector(q.d2.normalize(), 0.21); }
+const KIDFACE = {
+  A: { parent: 'spine2', c: V(-0.035, 2.135, 0.512), n: V(-0.12, 0.08, 0.99), r: 0.095, scream: false },
+  B: { parent: 'chest', c: V(0.1, 2.343, -0.178), n: V(0.54, 0.11, -0.84), r: 0.09, scream: true },
+};
+for (const k of ['A', 'B']) { const q = KID[k]; BONES.push(['kid' + k + '1', q.parent, q.sh], ['kid' + k + '2', 'kid' + k + '1', q.el], ['kid' + k + '3', 'kid' + k + '2', q.wr]); }
+BONES.push(['kidHeadA', KIDFACE.A.parent, KIDFACE.A.c], ['kidHeadB', KIDFACE.B.parent, KIDFACE.B.c]);
 // dedos: 4 por mão, 2 falanges articuladas cada (articulações = nós dos dedos), mais o polegar
 const FING = [0, 1, 2, 3].map(f => ({ len: [0.37, 0.41, 0.39, 0.32][f], z: 0.474 + (1.5 - f) * 0.025, xo: 0.004 * Math.abs(f - 1.5) }));
 const knuckle = (s, f) => V(s * (0.5 + FING[f].xo), 0.965, FING[f].z);
 const midJoint = (s, f) => { const k = knuckle(s, f), L = FING[f].len; return V(k.x - s * 0.012, k.y - L * 0.46, k.z + 0.012); };
 const tipPt = (s, f) => { const k = knuckle(s, f), L = FING[f].len; return V(k.x - s * 0.03, k.y - L, k.z + 0.03); };
+const distJoint = (s, f) => midJoint(s, f).lerp(tipPt(s, f), 0.55); // v9: 3ª falange
 for (const s of [1, -1]) {
   const k = s > 0 ? 'L' : 'R';
   BONES.push(['clav' + k, 'chest', V(s * 0.1, 2.5, 0.24)], ['upperArm' + k, 'clav' + k, V(s * 0.36, 2.48, 0.2)], ['forearm' + k, 'upperArm' + k, V(s * 0.47, 1.83, 0.33)],
     ['hand' + k, 'forearm' + k, V(s * 0.5, 1.12, 0.44)]);
-  for (let f = 0; f < 4; f++) BONES.push(['f' + f + 'a' + k, 'hand' + k, knuckle(s, f)], ['f' + f + 'b' + k, 'f' + f + 'a' + k, midJoint(s, f)]);
+  for (let f = 0; f < 4; f++) BONES.push(['f' + f + 'a' + k, 'hand' + k, knuckle(s, f)], ['f' + f + 'b' + k, 'f' + f + 'a' + k, midJoint(s, f)], ['f' + f + 'c' + k, 'f' + f + 'b' + k, distJoint(s, f)]);
   BONES.push(['thumb' + k, 'hand' + k, V(s * 0.488, 1.06, 0.505)]);
   BONES.push(['thigh' + k, 'hips', V(s * 0.17, 1.55, -0.05)], ['shin' + k, 'thigh' + k, V(s * 0.2, 0.95, 0.3)], ['foot' + k, 'shin' + k, V(s * 0.21, 0.36, -0.12)], ['toes' + k, 'foot' + k, V(s * 0.22, 0.07, 0.12)]);
 }
@@ -65,9 +82,11 @@ function vertexTint(q, rr, ex) {
 }
 
 // ---------- tubo esfolado ao longo de uma polilinha ----------
+let LO = false; // v9: geração do nível de detalhe baixo (LOD) — menos anéis/lados, sem dentes de dentro/palato/costuras
 class SkinBuilder {
   constructor() { this.parts = []; }
   tube(pts, { radial = 16, sub = 4, noise = 0.012, cap = true, uvScale = 1.5, extra, rScale = 1 } = {}) {
+    if (LO) { radial = Math.max(5, Math.round(radial * 0.45)); sub = Math.max(1, Math.round(sub * 0.45)); }
     const P = pts.map(q => q.p);
     const curve = new THREE.CatmullRomCurve3(P, false, 'centripetal');
     const n = (pts.length - 1) * sub + 1;
@@ -141,11 +160,11 @@ class SkinBuilder {
     if (geo.index) geo = geo.toNonIndexed();
     const n = geo.attributes.position.count;
     const si = new Uint16Array(n * 4), sw = new Float32Array(n * 4), col = new Float32Array(n * 3);
-    const q = new THREE.Vector3();
+    const q = new THREE.Vector3(), cv = geo.attributes.cav;
     for (let i = 0; i < n; i++) {
       si[i * 4] = bone; sw[i * 4] = 1;
       q.fromBufferAttribute(geo.attributes.position, i);
-      const c = vertexTint(q, 0.06, 0); col[i * 3] = c[0] * tint; col[i * 3 + 1] = c[1] * tint; col[i * 3 + 2] = c[2] * tint;
+      const c = vertexTint(q, 0.06, 0), k = tint * (cv ? 1 - cv.getX(i) : 1); col[i * 3] = c[0] * k; col[i * 3 + 1] = c[1] * k * (cv ? 1 - cv.getX(i) * 0.15 : 1); col[i * 3 + 2] = c[2] * k * (cv ? 1 - cv.getX(i) * 0.2 : 1);
     }
     for (const k of Object.keys(geo.attributes)) if (!['position', 'normal', 'uv'].includes(k)) geo.deleteAttribute(k);
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
@@ -162,7 +181,8 @@ const one = (name) => [[BI[name], 1]];
 const mix = (a, b, w) => [[BI[a], 1 - w], [BI[b], w]];
 const ridge = (x, sharp = 2.5) => Math.pow(0.5 + 0.5 * Math.sin(x), sharp);
 
-function buildGeometry() {
+function buildGeometry(lo = false) {
+  LO = lo;
   const skin = new SkinBuilder(), claw = new SkinBuilder(), maw = new SkinBuilder(), teeth = new SkinBuilder();
   // ----- tronco: costelas inclinadas, esterno, vértebras salientes, escápulas, ventre fundo, cristas ilíacas -----
   const torsoBump = (a, u, p, d) => {
@@ -192,15 +212,23 @@ function buildGeometry() {
     pt(V(0, 1.6, -0.05), 0.2, one('hips'), 1.35, 0.95),
     pt(J.spine1, 0.15, mix('hips', 'spine1', 0.6), 1.15, 0.9),
     pt(V(0, 2.02, 0.04), 0.19, mix('spine1', 'spine2', 0.6), 1.25, 0.9),
-    pt(J.spine2, 0.24, mix('spine2', 'chest', 0.3), 1.32, 0.88),
-    pt(J.chest, 0.27, one('chest'), 1.35, 0.85),
+    pt(J.spine2, 0.24, mix('spine2', 'spine3', 0.3), 1.32, 0.88),
+    pt(J.chest, 0.27, mix('spine3', 'chest', 0.8), 1.35, 0.85),
     pt(V(0, 2.52, 0.28), 0.22, mix('chest', 'neck', 0.2), 1.3, 0.85),
     pt(J.neck, 0.11, mix('chest', 'neck', 0.7), 1, 1),
-    pt(V(0, 2.72, 0.44), 0.085, mix('neck', 'head', 0.5), 1, 1.1),
+    pt(V(0, 2.72, 0.44), 0.085, mix('neck', 'neck2', 0.75), 1, 1.1),
   ], { radial: 30, sub: 7, noise: 0.01, extra: torsoBump, uvScale: 1.2 });
+  const torsoG = skin.parts[skin.parts.length - 1];
+  // v9: ponto da superfície do tronco mais perto de p (+ normal) — encaixa rostos, braços e costuras na pele
+  const surf = (p) => {
+    const P = torsoG.attributes.position, N = torsoG.attributes.normal; let bi = 0, bd = 1e9;
+    for (let i = 0; i < P.count; i++) { const d = (P.getX(i) - p.x) ** 2 + (P.getY(i) - p.y) ** 2 + (P.getZ(i) - p.z) ** 2; if (d < bd) { bd = d; bi = i; } }
+    return { p: V(P.getX(bi), P.getY(bi), P.getZ(bi)), n: V(N.getX(bi), N.getY(bi), N.getZ(bi)).normalize() };
+  };
+  if (typeof globalThis !== 'undefined' && globalThis.__crSurf) globalThis.__crSurf(surf);
   // ----- cabeça alongada, sem olhos, com crânio marcado -----
   skin.tube([
-    pt(V(0, 2.74, 0.44), 0.07, mix('neck', 'head', 0.7)),
+    pt(V(0, 2.74, 0.44), 0.07, mix('neck2', 'head', 0.6)),
     pt(V(0, 2.82, 0.5), 0.13, one('head'), 0.95, 1.05),
     pt(V(0, 2.86, 0.6), 0.165, one('head'), 0.9, 1.15),
     pt(V(0, 2.82, 0.74), 0.15, one('head'), 0.8, 1.1),
@@ -231,7 +259,7 @@ function buildGeometry() {
     // levemente curvos, em duas fileiras: a de fora com presas maiores nas pontas, a de dentro com
     // dentinhos serrilhados. Os dois lados ficam intercalados para se encaixarem quando a boca fecha.
     const mouthAt = (t) => ({ y: 2.825 - t * 0.29, z: 0.72 + Math.sin(t * Math.PI) * 0.13 });
-    for (const row of [0, 1]) {
+    for (const row of (LO ? [0] : [0, 1])) {
       const n = row === 0 ? 14 : 18;
       for (let i = 0; i < n; i++) {
         const t = (i + 0.5 + (s > 0 ? 0 : 0.5)) / (n + 0.5);
@@ -259,12 +287,12 @@ function buildGeometry() {
   }
   // língua comprida e escura, presa ao fundo da boca (aparece quando as mandíbulas abrem)
   maw.tube([pt(V(0, 2.69, 0.74), 0.022, one('head'), 1.4, 0.6), pt(V(0, 2.665, 0.79), 0.019, one('head'), 1.5, 0.55), pt(V(0, 2.635, 0.835), 0.014, one('head'), 1.4, 0.5), pt(V(0, 2.62, 0.86), 0.006, one('head'))], { radial: 10, sub: 4, noise: 0.002 });
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < (LO ? 0 : 7); i++) {
     const t = (i + 0.5) / 7, y = 2.8 - t * 0.2, z = 0.75 + Math.sin(t * Math.PI) * 0.07, h = 0.018 + 0.012 * hash3(i, 2, 2);
     const g = new THREE.ConeGeometry(0.004, h, 5); g.translate(0, -h / 2, 0); g.rotateX(0.5); g.translate(0, y, z + 0.012); teeth.rigid(g, BI.head);
   }
   // céu da boca com sulcos (palato) e fendas nasais acima da boca
-  for (let i = 0; i < 6; i++) { const g = new THREE.TorusGeometry(0.03, 0.0035, 5, 10, Math.PI); g.rotateY(Math.PI / 2); g.rotateX(-0.5); g.translate(0, 2.74 - i * 0.02, 0.765 + i * 0.006); maw.rigid(g, BI.head); }
+  for (let i = 0; i < (LO ? 0 : 6); i++) { const g = new THREE.TorusGeometry(0.03, 0.0035, 5, 10, Math.PI); g.rotateY(Math.PI / 2); g.rotateX(-0.5); g.translate(0, 2.74 - i * 0.02, 0.765 + i * 0.006); maw.rigid(g, BI.head); }
   for (const s of [1, -1]) { const g = new THREE.SphereGeometry(0.011, 8, 6); g.scale(0.5, 1.8, 0.6); g.rotateZ(s * 0.3); g.translate(s * 0.022, 2.87, 0.83); maw.rigid(g, BI.head); }
   // espinhos ósseos nas costas (cristas da coluna)
   for (let i = 0; i < 9; i++) {
@@ -293,17 +321,18 @@ function buildGeometry() {
     // dedos longos e ossudos: 2 falanges articuladas com nós salientes + garras curvas escuras
     for (let f = 0; f < 4; f++) {
       const K = knuckle(s, f), M = midJoint(s, f), T = tipPt(s, f);
-      const a = 'f' + f + 'a' + k, b = 'f' + f + 'b' + k;
+      const a = 'f' + f + 'a' + k, b = 'f' + f + 'b' + k, c3 = 'f' + f + 'c' + k;
       skin.tube([
         pt(K.clone().add(V(0, 0.04, -0.004)), 0.018, one('hand' + k)),
         pt(K, 0.0195, mix('hand' + k, a, 0.7)),
         pt(K.clone().lerp(M, 0.5), 0.0125, one(a)),
         pt(M.clone().add(V(0, 0.008, 0)), 0.0165, mix(a, b, 0.4)),
-        pt(M.clone().lerp(T, 0.45), 0.011, one(b)),
-        pt(M.clone().lerp(T, 0.8), 0.012, one(b)),
-        pt(T, 0.0085, one(b)),
+        pt(M.clone().lerp(T, 0.3), 0.011, one(b)),
+        pt(M.clone().lerp(T, 0.55), 0.0135, mix(b, 'f' + f + 'c' + k, 0.5)), // v9: 3ª junta (nó saliente)
+        pt(M.clone().lerp(T, 0.8), 0.0105, one('f' + f + 'c' + k)),
+        pt(T, 0.0085, one('f' + f + 'c' + k)),
       ], { radial: 9, sub: 3, noise: 0.0015, extra: (aa, u, p, d, r0) => 0.15 * r0 * ridge(aa * 2 + 0.5, 6) });
-      claw.tube([pt(T.clone().add(V(0, 0.012, 0)), 0.0085, one(b)), pt(T.clone().add(V(-s * 0.012, -0.035, 0.012)), 0.006, one(b)), pt(T.clone().add(V(-s * 0.035, -0.075, 0.02)), 0.0028, one(b)), pt(T.clone().add(V(-s * 0.055, -0.092, 0.022)), 0.0005, one(b))], { radial: 7, sub: 4, noise: 0 });
+      claw.tube([pt(T.clone().add(V(0, 0.012, 0)), 0.0085, one(c3)), pt(T.clone().add(V(-s * 0.012, -0.035, 0.012)), 0.006, one(c3)), pt(T.clone().add(V(-s * 0.035, -0.075, 0.02)), 0.0028, one(c3)), pt(T.clone().add(V(-s * 0.055, -0.092, 0.022)), 0.0005, one(c3))], { radial: 7, sub: 4, noise: 0 });
     }
     // polegar
     {
@@ -334,6 +363,89 @@ function buildGeometry() {
       const tip = V(tx + t * 0.025, 0.025, 0.34);
       skin.tube([pt(V(tx, 0.06, 0.12), 0.024, one('toes' + k)), pt(V(tx + t * 0.02, 0.04, 0.25), 0.017, one('toes' + k)), pt(tip, 0.01, one('toes' + k))], { radial: 8, sub: 3, noise: 0.002 });
       claw.tube([pt(tip.clone().add(V(0, 0.004, -0.01)), 0.01, one('toes' + k)), pt(tip.clone().add(V(0, -0.002, 0.04)), 0.007, one('toes' + k)), pt(tip.clone().add(V(0, -0.02, 0.075)), 0.0008, one('toes' + k))], { radial: 7, sub: 3, noise: 0 });
+    }
+  }
+  // ----- v9: as FILHAS fundidas ao corpo da mãe -----
+  const stitchRing = (c, n, R, cnt, bone, jitter = 0) => {
+    const t1 = new THREE.Vector3().crossVectors(n, Math.abs(n.y) > 0.9 ? V(1, 0, 0) : V(0, 1, 0)).normalize(), t2 = new THREE.Vector3().crossVectors(n, t1);
+    for (let i = 0; i < cnt; i++) {
+      const a = (i + 0.5 * hash3(i, R * 50, 3)) / cnt * Math.PI * 2;
+      const rad = t1.clone().multiplyScalar(Math.cos(a)).addScaledVector(t2, Math.sin(a));
+      const sp = surf(c.clone().addScaledVector(rad, R * (1 + jitter * (hash3(i, 4, 5) - 0.5))).addScaledVector(n, 0.02));
+      const len = 0.026 + 0.012 * hash3(i, 9, R);
+      const g = new THREE.CylinderGeometry(0.0024, 0.0024, len, 4, 1);
+      // linha atravessando a emenda (radial), deitada na pele e levemente torta
+      const dir = rad.clone().addScaledVector(sp.n, -rad.dot(sp.n)).normalize().applyAxisAngle(sp.n, (hash3(i, 2, 7) - 0.5) * 0.5);
+      g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(V(0, 1, 0), dir));
+      g.translate(sp.p.x + sp.n.x * 0.0015, sp.p.y + sp.n.y * 0.0015, sp.p.z + sp.n.z * 0.0015);
+      claw.rigid(g, BI[bone]);
+    }
+  };
+  for (const k of ['A', 'B']) {
+    const F = KIDFACE[k], n = F.n.clone().normalize(), r = F.r;
+    // rosto de criança meio enterrado na pele: testa, olhos fechados afundados, nariz pequeno, boca
+    // (A: fechada, serena — a que aceitou; B: aberta num grito — a que resistiu)
+    // só a metade da frente (a de trás fica dentro do corpo): grade densa mapeada num disco → domo; a borda
+    // dobra para dentro da pele
+    const NG = LO ? 12 : 44;
+    const g = new THREE.PlaneGeometry(2, 2, NG, NG);
+    const pp = g.attributes.position, d = new THREE.Vector3(), cav = new Float32Array(pp.count);
+    const gs = (x, y, cx, cy, wx, wy) => Math.exp(-(((x - cx) / wx) ** 2) - (((y - cy) / wy) ** 2));
+    for (let i = 0; i < pp.count; i++) {
+      const u = pp.getX(i), v = pp.getY(i);
+      const x = u * Math.sqrt(1 - v * v / 2), y = v * Math.sqrt(1 - u * u / 2), rho = Math.hypot(x, y);
+      d.set(x, y, Math.sqrt(Math.max(0, 1 - rho * rho)) - 0.55 * smooth(0.78, 1, rho));
+      const fx = x, fy = y, front = 1;
+      const eye = gs(fx, fy, 0.34, 0.1, 0.17, 0.12) + gs(fx, fy, -0.34, 0.1, 0.17, 0.12);
+      let dr = 0, c = 0;
+      dr -= 0.34 * eye * front; c += 0.55 * eye * front;                                                   // órbitas fundas
+      const lid = gs(fx, fy, 0.34, 0.08, 0.13, 0.03) + gs(fx, fy, -0.34, 0.08, 0.13, 0.03);
+      dr += 0.1 * lid * front; c += 0.25 * lid * front;                                                     // pálpebras fechadas (risco)
+      dr += 0.14 * gs(fx, fy, 0, 0.3, 0.55, 0.07) * front;                                                  // sobrancelha
+      dr += 0.32 * gs(fx, fy, 0, -0.08, 0.075, 0.16) * front + 0.12 * gs(fx, fy, 0, -0.2, 0.13, 0.05) * front; // nariz
+      dr += 0.12 * (gs(fx, fy, 0.36, -0.24, 0.2, 0.15) + gs(fx, fy, -0.36, -0.24, 0.2, 0.15)) * front;      // bochechas
+      if (F.scream) { const m = gs(fx, fy, 0, -0.4, 0.2, 0.27); dr -= 0.8 * m * front; c += 0.9 * m * front; dr += 0.1 * gs(fx, fy, 0, -0.4, 0.3, 0.36) * front; }
+      else { const m = gs(fx, fy, 0, -0.38, 0.22, 0.028); dr -= 0.12 * m * front; c += 0.5 * m * front; dr += 0.07 * gs(fx, fy, 0, -0.46, 0.15, 0.05) * front; }
+      dr += 0.1 * gs(fx, fy, 0, -0.72, 0.28, 0.12) * front;                                                  // queixo
+      const rr = 1 + dr + 0.01 * vnoise(d.x * 7, d.y * 7, d.z * 7);
+      pp.setXYZ(i, d.x * r * rr * 0.86, d.y * r * rr * 1.08, d.z * r * rr * 0.7);
+      cav[i] = clamp(c, 0, 0.85);
+    }
+    g.setAttribute('cav', new THREE.BufferAttribute(cav, 1));
+    g.computeVertexNormals();
+    const qf = new THREE.Quaternion().setFromUnitVectors(V(0, 0, 1), n);
+    // rosto A um pouco inclinado (dormindo), B torto (tentando sair)
+    qf.multiply(new THREE.Quaternion().setFromAxisAngle(V(0, 0, 1), k === 'A' ? 0.35 : -0.5));
+    g.applyQuaternion(qf); g.translate(F.c.x + n.x * 0.02, F.c.y + n.y * 0.02, F.c.z + n.z * 0.02);
+    skin.rigid(g, BI['kidHead' + k], 0.93);
+    if (F.scream) { const m = new THREE.SphereGeometry(r * 0.2, 10, 8); m.scale(1, 1.4, 0.5); m.translate(0, -r * 0.4, r * 0.3); m.applyQuaternion(qf); m.translate(F.c.x + n.x * 0.02, F.c.y + n.y * 0.02, F.c.z + n.z * 0.02); maw.rigid(m, BI['kidHead' + k]); }
+    if (!LO) stitchRing(F.c.clone().addScaledVector(n, -0.01), n, r * 1.08, 15, F.parent, 0.1);
+  }
+  for (const k of ['A', 'B']) {
+    const Q = KID[k], n = Q.n.clone().normalize(), a1 = 'kid' + k + '1', a2 = 'kid' + k + '2', a3 = 'kid' + k + '3';
+    const sh = Q.sh, el = Q.el, wr = Q.wr, dirF = wr.clone().sub(el).normalize();
+    const palm = wr.clone().addScaledVector(dirF, 0.06);
+    skin.tube([
+      pt(sh.clone().addScaledVector(n, -0.05), 0.055, one(Q.parent)),
+      pt(sh, 0.046, mix(Q.parent, a1, 0.55)),
+      pt(sh.clone().lerp(el, 0.45), 0.036, one(a1)),
+      pt(el, 0.03, mix(a1, a2, 0.5)),
+      pt(el.clone().lerp(wr, 0.4), 0.031, one(a2)),
+      pt(wr, 0.021, mix(a2, a3, 0.6), 1.25, 0.8),
+      pt(palm, 0.027, one(a3), 1.5, 0.6),
+    ], { radial: 12, sub: 5, noise: 0.003, extra: (aa, u) => (u > 0.2 && u < 0.8 ? 0.0025 * ridge(aa * 2 + u * 3, 5) : 0) });
+    if (!LO) stitchRing(sh.clone().addScaledVector(n, 0.005), n, 0.068, 13, Q.parent, 0.15);
+    // mãozinha: 4 dedos curtos + polegar, unhas escuras de sujeira
+    const side = new THREE.Vector3().crossVectors(dirF, n).normalize();
+    for (let f = 0; f < 5; f++) {
+      const thumb = f === 4, o = thumb ? -0.034 : (f - 1.5) * 0.014;
+      const b0 = palm.clone().addScaledVector(side, o).addScaledVector(dirF, thumb ? -0.025 : 0.016);
+      const L = thumb ? 0.04 : [0.05, 0.058, 0.055, 0.045][f];
+      const curl = n.clone().multiplyScalar(-0.35 - 0.1 * f);
+      const t1 = b0.clone().addScaledVector(dirF.clone().add(curl).normalize(), L * 0.55);
+      const t2 = t1.clone().addScaledVector(dirF.clone().addScaledVector(n, -0.9).normalize(), L * 0.45);
+      skin.tube([pt(b0, 0.0085, one(a3)), pt(t1, 0.0075, one(a3)), pt(t2, 0.006, one(a3))], { radial: 6, sub: 2, noise: 0.0008 });
+      if (!LO) { const nl = new THREE.SphereGeometry(0.005, 5, 4); nl.scale(1, 0.4, 1.3); nl.translate(t2.x, t2.y, t2.z); claw.rigid(nl, BI[a3]); }
     }
   }
   return mergeGeometries([skin.build(), claw.build(), maw.build(), teeth.build()], true);
@@ -369,15 +481,25 @@ export function buildCreature(M) {
   const clawMat = new THREE.MeshStandardMaterial({ color: 0x0e0b09, roughness: 0.42, metalness: 0.0 });
   const mawMat = new THREE.MeshPhysicalMaterial({ color: 0x1c0507, roughness: 0.18, metalness: 0.0, clearcoat: 0.6, clearcoatRoughness: 0.15 });
   const toothMat = new THREE.MeshPhysicalMaterial({ color: 0xc9b98e, roughness: 0.38, clearcoat: 0.5, clearcoatRoughness: 0.3 }); // marfim amarelado, úmido
-  const mesh = new THREE.SkinnedMesh(geo, [skinMat, clawMat, mawMat, toothMat]);
-  mesh.add(bones[0]);
-  mesh.bind(new THREE.Skeleton(bones));
-  mesh.castShadow = true; mesh.receiveShadow = true;
-  mesh.frustumCulled = false;
-  const root = new THREE.Group(); root.add(mesh);
+  const mats = [skinMat, clawMat, mawMat, toothMat];
+  const mesh = new THREE.SkinnedMesh(geo, mats);
+  const root = new THREE.Group();
+  root.add(bones[0]);
+  root.updateMatrixWorld(true);
+  const skel = new THREE.Skeleton(bones); // inversas calculadas com a raiz na origem
+  mesh.bind(skel, new THREE.Matrix4());
+  // v9: LOD — o mesmo esqueleto anima a malha detalhada (perto) e a leve (longe, > 13 m)
+  const lo = new THREE.SkinnedMesh(buildGeometry(true), mats);
+  lo.bind(skel, new THREE.Matrix4());
+  const lod = new THREE.LOD();
+  lod.addLevel(mesh, 0, 0.08); lod.addLevel(lo, 13, 0.08);
+  for (const m of [mesh, lo]) { m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false; }
+  root.add(lod);
   const anim = new CreatureAnimator(bones);
   anim.root = root;
-  return { root, mesh, bones, anim, update: (dt, s) => anim.update(dt, s) };
+  // setLOD('hi'|'lo') trava um nível (trailer/close); setLOD(null) volta ao automático
+  const setLOD = (lv) => { lod.autoUpdate = !lv; if (lv) { mesh.visible = lv !== 'lo'; lo.visible = lv === 'lo'; } };
+  return { root, mesh, lo, lod, bones, anim, setLOD, update: (dt, s) => anim.update(dt, s) };
 }
 
 // =====================================================================================
