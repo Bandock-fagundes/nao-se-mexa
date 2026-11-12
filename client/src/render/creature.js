@@ -687,14 +687,15 @@ export class CreatureAnimator {
     const ph = this.cyc * Math.PI * 2;
     const cL = Math.cos(ph);                     // >0: perna esquerda à frente
     const mid = Math.cos(2 * (ph - Math.PI * duty)); // 2x por ciclo: meio do apoio
-    // postura base curvada
-    P.spine1.x = 0.24; P.spine2.x = 0.16; P.chest.x = 0.12; P.neck.x = -0.3; P.head.x = -0.02;
+    // v9b: postura base ERETA e esticada (pedido do Gabriel): coluna estendida, cabeça alta. Só se curva para
+    // passar por portas/tetos baixos (s.headroom → this.duckK) e inclina um pouco à frente ao correr.
+    P.spine1.x = 0.03; P.spine2.x = 0.02; P.chest.x = 0.0; P.neck.x = -0.06; P.head.x = 0.02;
     P.clavL.z = -0.08; P.clavR.z = 0.08;
     P.upperArmL.z = -0.04; P.upperArmR.z = 0.04;
     P.forearmL.x = -0.2; P.forearmR.x = -0.2;
     P.handL.x = -0.1; P.handR.x = -0.1;
     // balanço vertical (andar: alto no meio do apoio; correr: baixo), lateral e torções
-    hip.y += mid * lerp(0.03, -0.06, rf) * gw - rf * 0.16 - inv * 0.05;
+    hip.y += mid * lerp(0.03, -0.04, rf) * gw - rf * 0.06 - inv * 0.02; // v9b: na corrida abaixa só um pouco
     const sideSw = Math.cos(ph - Math.PI * duty);
     hip.x += sideSw * 0.035 * gw * (1 - rf * 0.6);
     P.hips.z = sideSw * 0.07 * gw * (1 - rf * 0.4);
@@ -705,33 +706,33 @@ export class CreatureAnimator {
     // v9: ASSIMETRIA — ombro esquerdo caído e braço mais solto; direito mais dobrado, junto do corpo
     P.clavL.z -= 0.08; P.upperArmL.z -= 0.05; P.upperArmL.x += 0.05; P.forearmR.x -= 0.28; P.handR.x -= 0.12; P.clavR.z += 0.03;
     // v9: ESPREITA (andar) — quadril baixo, tronco projetado, cabeça baixa à frente e estável; braços pendem à frente
+    // v9b: andar ereto — sem abaixar o quadril; peito aberto, cabeça alta, braços longos pendendo quase retos
     const stalk = gw * (1 - rf);
-    hip.y -= 0.1 * stalk; P.spine1.x += 0.12 * stalk; P.spine2.x += 0.05 * stalk; P.neck.x -= 0.08 * stalk; P.head.x -= 0.04 * stalk;
-    P.upperArmL.x -= 0.22 * stalk; P.upperArmR.x -= 0.16 * stalk;
+    P.chest.x -= 0.03 * stalk; P.neck.x -= 0.02 * stalk;
+    P.upperArmL.x -= 0.06 * stalk; P.upperArmR.x -= 0.04 * stalk;
     // braços opostos às pernas (andar); na corrida viram "patas" que agarram à frente
     const armA = 0.34 * gw * (1 - rf) * (1 - 0.4 * inv);
     P.upperArmL.x += cL * armA; P.upperArmR.x -= cL * armA * 0.7;
     P.forearmL.x -= Math.max(0, -cL) * 0.32 * gw * (1 - rf); P.forearmR.x -= Math.max(0, cL) * 0.25 * gw * (1 - rf);
     P.handL.x += Math.sin(ph) * 0.18 * gw; P.handR.x -= Math.sin(ph) * 0.14 * gw;
-    // v9: CORRIDA DE ARANHA — tronco quase na horizontal, braços abertos alcançando à frente alternados
-    // (como patas dianteiras), cabeça travada à frente, tronco dando guinadas
-    P.spine1.x += rf * 0.55; P.spine2.x += rf * 0.2; P.spine3.x += rf * 0.12; P.chest.x += rf * 0.04;
-    P.neck.x -= rf * 0.5; P.neck2.x -= rf * 0.22; P.head.x -= rf * 0.3;
-    // (o tronco já está ~80° à frente). s.free = espaço livre à frente: perto de parede os braços se recolhem
+    // v9b: CORRIDA — não é mais de aranha: tronco só levemente inclinado à frente, cabeça alta olhando a presa,
+    // braços compridos balançando em contrafase (cotovelos dobrados), mãos abertas meio à frente.
+    P.spine1.x += rf * 0.16; P.spine2.x += rf * 0.06; P.spine3.x += rf * 0.03;
+    P.neck.x -= rf * 0.14; P.neck2.x -= rf * 0.05; P.head.x -= rf * 0.06;
     this.freeK = (this.freeK ?? 1) + (smooth(0.75, 1.5, s.free ?? 1.6) - (this.freeK ?? 1)) * Math.min(1, dt * 8);
-    const fk = this.freeK, reachL = lerp(1.25, 1.85 - 0.6 * cL, fk), reachR = lerp(1.25, 1.85 + 0.6 * cL, fk);          // braço oposto à perna da frente estende
-    P.upperArmL.x -= rf * reachL; P.upperArmR.x -= rf * reachR;
-    P.upperArmL.z -= rf * 0.38; P.upperArmR.z += rf * 0.38;
-    P.forearmL.x -= rf * (0.15 + 0.75 * Math.max(0, cL)); P.forearmR.x -= rf * (0.15 + 0.75 * Math.max(0, -cL));
-    P.handL.x += rf * (0.35 - 0.3 * Math.max(0, cL)); P.handR.x += rf * (0.35 - 0.3 * Math.max(0, -cL));
-    P.spine1.x += mid * 0.06 * rf; // investida a cada passada
-    P.spine1.z += rf * 0.1 * Math.sin(ph); P.spine3.z += rf * 0.09 * Math.sin(ph - 1.1); P.chest.y += rf * 0.12 * Math.cos(ph - 0.6);
-    P.hips.z += rf * 0.06 * Math.sin(ph + 0.4);
+    const fk = this.freeK, armR = 0.7 * rf * lerp(0.5, 1, fk);
+    P.upperArmL.x += -rf * 0.25 + cL * armR; P.upperArmR.x += -rf * 0.25 - cL * armR;
+    P.upperArmL.z -= rf * 0.08; P.upperArmR.z += rf * 0.08;
+    P.forearmL.x -= rf * (0.55 + 0.35 * Math.max(0, -cL)); P.forearmR.x -= rf * (0.55 + 0.35 * Math.max(0, cL));
+    P.handL.x += rf * 0.1; P.handR.x += rf * 0.1;
+    P.spine1.x += mid * 0.03 * rf; // investida a cada passada (leve)
+    P.spine1.z += rf * 0.05 * Math.sin(ph); P.spine3.z += rf * 0.05 * Math.sin(ph - 1.1); P.chest.y += rf * 0.1 * Math.cos(ph - 0.6);
+    P.hips.z += rf * 0.04 * Math.sin(ph + 0.4);
     // guinadas aleatórias do tronco na corrida
     this.lurchCd -= dt;
     if (rf > 0.5 && this.lurchCd <= 0) {
       this.lurchCd = 0.4 + this.rnd() * 0.7; const sg = this.rnd() < 0.5 ? -1 : 1;
-      this.spr.spine2.z.v += sg * (2.2 + this.rnd() * 2); this.spr.chest.y.v -= sg * (1.5 + this.rnd() * 2); this.spr.spine1.x.v += 1.5 * this.rnd();
+      this.spr.spine2.z.v += sg * (1.2 + this.rnd() * 1.2); this.spr.chest.y.v -= sg * (1.0 + this.rnd() * 1.4); this.spr.spine1.x.v += 0.6 * this.rnd();
     }
     // v9: onda que sobe pela coluna, vértebra por vértebra (andar e parado)
     { const wv = 0.035 * gw * (1 - rf * 0.5) + 0.018 * (1 - gw), wp = ph * (gw > 0.3 ? 1 : 0) + t * 0.9 * (1 - gw);
@@ -864,11 +865,21 @@ export class CreatureAnimator {
     if ((w = W('recover'))) { P.neck.x += 0.22 * w; P.spine1.x += 0.12 * w; hip.y -= 0.04 * w; jaw += (0.12 + 0.08 * Math.sin(this.brPh)) * w; }
     // inércia da parada repentina (sobressalto amortecido)
     this.lurch = Math.max(0, this.lurch - dt * 1.8);
-    // abaixa ao passar por portas
-    const duck = s.duck || 0;
-    P.spine1.x += duck * 0.35; P.neck.x -= duck * 0.15; hip.y -= duck * 0.14;
+    // v9b: abaixa SÓ para caber — s.headroom (m acima do piso: menor vão de porta/teto à frente e em volta) é
+    // comparado com o alto da cabeça medido no quadro anterior; o controlador desce rápido e sobe devagar.
+    // Pose do agachamento: joelhos dobram (quadril desce), coluna dobra à frente, pescoço compensa (olha à frente).
+    {
+      const room = typeof s.headroom === 'number' ? s.headroom : 99;
+      const err = (this.headTop ?? 2.95) - (room - 0.12);
+      const want = clamp((this.duckK || 0) + err * 2.2, 0, 1.6);
+      this.duckK = (this.duckK || 0) + (want - (this.duckK || 0)) * Math.min(1, dt * (want > (this.duckK || 0) ? 14 : 2.2));
+      if (room > 90) this.duckK = Math.max(0, this.duckK - dt * 2);
+    }
+    const duck = Math.max(s.duck && typeof s.headroom !== 'number' ? s.duck * 0.6 : 0, this.duckK || 0);
+    P.spine1.x += duck * 0.42; P.spine2.x += duck * 0.12; P.neck.x -= duck * 0.32; P.head.x -= duck * 0.08; hip.y -= duck * 0.26;
     // v6: no vão da porta encolhe os ombros e cola os braços no corpo (não varre o batente)
-    P.clavL.z += duck * 0.12; P.clavR.z -= duck * 0.12; P.upperArmL.z += duck * 0.16; P.upperArmR.z -= duck * 0.16;
+    const dk = Math.min(1, duck);
+    P.clavL.z += dk * 0.12; P.clavR.z -= dk * 0.12; P.upperArmL.z += dk * 0.16; P.upperArmR.z -= dk * 0.16;
     // v6: peso — cada pisada desce o quadril e a caixa torácica (impacto amortecido), ombros acompanham
     this.impact = Math.max(0, (this.impact || 0) - dt * 5.5);
     const imp = Math.sin(Math.min(1, this.impact) * Math.PI) * (1 - rf * 0.4);
@@ -949,6 +960,10 @@ export class CreatureAnimator {
     b.hips.updateMatrix();
     this.m4.copy(b.hips.matrix).invert();
     for (const k of ['L', 'R']) this.solveLeg(k, this.feet[k]);
+    // v9b: alto da cabeça (m acima da raiz) — realimenta o controlador de agachamento
+    { const root = b.root || b.hips.parent; root.updateMatrixWorld(true);
+      this.tmp.set(0, 0.25, 0.1).applyMatrix4(b.head.matrixWorld); const r = this.tmp2.setFromMatrixPosition(root.matrixWorld);
+      const sc = root.matrixWorld.getMaxScaleOnAxis() || 1; this.headTop = (this.tmp.y - r.y) / sc; }
     this.first = false;
   }
   // v6: ponto do mundo entre as duas mãos (onde a vítima é segurada no agarrão)

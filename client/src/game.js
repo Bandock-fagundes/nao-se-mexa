@@ -14,6 +14,7 @@ import { makeBeamCone, flashlightCookie } from './render/renderer.js';
 import { buildKey } from './render/props.js';
 import { storyPainting } from './story.js';
 import { LEVEL_INFO } from '../../shared/sound.js';
+import { headroomY } from '../../shared/ceiling.js';
 
 // v2: marcadores vistos ATRAVÉS das paredes (sem teste de profundidade): porta de saída e "fantasminha"
 function xrayMat(color, opacity = 0.8) { return new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthTest: false, depthWrite: false }); }
@@ -748,11 +749,11 @@ export class Game {
       c.visible = Math.abs(cb.level - (this.camLevel ?? this.p.level)) <= 1;
       c.position.set(ca.x + (cb.x - ca.x) * k, ca.y + (cb.y - ca.y) * k, ca.z + (cb.z - ca.z) * k);
       c.rotation.y = lerpA(ca.yaw, cb.yaw, k);
-      // abaixa ao passar sob portas
-      let duck = 0;
-      const L = cb.level, cx = cellOf(c.position.x), cz = cellOf(c.position.z);
-      for (let a2 = -2; a2 <= 2 && !duck; a2++) for (let b2 = -2; b2 <= 2; b2++) { const t = this.world.cell(L, cx + a2, cz + b2); if (t === T.DOOR || (t === T.FLOOR && this.map.levels[L].room[(cz + b2) * W + cx + a2] < 0)) { duck = 1; break; } }
-      this.crDuck = (this.crDuck || 0) + (duck - (this.crDuck || 0)) * Math.min(1, dt * 4);
+      // v9b: altura livre (vergas de porta/arco, teto, telhado do sótão) em volta e ~1,4 m à frente → a criatura,
+      // sempre ereta, só se abaixa o necessário para passar (o animador mede o alto da cabeça e compara)
+      const L = cb.level, sp2 = Math.hypot(cb.x - ca.x, cb.z - ca.z), fdx = sp2 > 1e-4 ? (cb.x - ca.x) / sp2 : -Math.sin(c.rotation.y) * 0, fdz = sp2 > 1e-4 ? (cb.z - ca.z) / sp2 : 0;
+      const hdx = sp2 > 1e-4 ? fdx : Math.sin(c.rotation.y), hdz = sp2 > 1e-4 ? fdz : Math.cos(c.rotation.y);
+      this.crHeadroom = headroomY(this.map, L, c.position.x, c.position.z, hdx, hdz) - c.position.y;
       // v6: o corpo da criatura (cabeça, mãos, ombros) se projeta ~0,9 m à frente da raiz e 0,55 m para os lados;
       // o servidor só colide o centro (raio 0,42). Recuo visual suave para nunca enfiar a cabeça/mãos numa parede,
       // janela ou porta fechada.
@@ -762,7 +763,7 @@ export class Game {
         c.position.x += this.crPush.x; c.position.z += this.crPush.z; }
       this.crState = cb;
       const li = (f) => (typeof ca[f] === 'number' && typeof cb[f] === 'number') ? ca[f] + (cb[f] - ca[f]) * k : undefined;
-      this.cr.anim.update(dt, { anim: cb.anim, animT: cb.animT, speed: ca.speed + (cb.speed - ca.speed) * k, headYaw: ca.headYaw + (cb.headYaw - ca.headYaw) * k, headPitch: ca.headPitch + (cb.headPitch - ca.headPitch) * k, yaw: c.rotation.y, duck: this.crDuck, vx: li('vx'), vz: li('vz'), turn: li('turn'), free: this.crFree ?? 1.6 });
+      this.cr.anim.update(dt, { anim: cb.anim, animT: cb.animT, speed: ca.speed + (cb.speed - ca.speed) * k, headYaw: ca.headYaw + (cb.headYaw - ca.headYaw) * k, headPitch: ca.headPitch + (cb.headPitch - ca.headPitch) * k, yaw: c.rotation.y, headroom: this.crHeadroom, vx: li('vx'), vz: li('vz'), turn: li('turn'), free: this.crFree ?? 1.6 });
     }
     // colegas
     let si = 0;

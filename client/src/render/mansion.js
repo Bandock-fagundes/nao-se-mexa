@@ -9,7 +9,8 @@ import { buildExterior } from './exterior.js';
 import { buildFireGlow, windowSkyMaterial, windowSkyGeometry, windowGlassMaterial, moonPatchMaterial, moonPatchGeometry } from './fx.js';
 import { SURFACE_Y } from '../../../shared/mapgen.js';
 import { makeRng } from '../../../shared/rng.js';
-import { ceilingPlan, atticRoofBox } from '../../../shared/ceiling.js';
+import { ceilingPlan, atticRoofBox, ROOF_RISE, roofHeightAt } from '../../../shared/ceiling.js';
+export { ROOF_RISE, roofHeightAt };
 
 const OPEN = new Set([T.FLOOR, T.DOOR, T.STAIR, T.LOW, T.TALL, T.EXIT, T.HOLE, T.CURTAIN]);
 
@@ -707,12 +708,6 @@ export function buildWindowParts(g, wdw, wi, M) {
 // v9b: telhado de duas águas do sótão (cumeeira ao longo de X, no meio de Z). Superfície interna de tábuas voltada
 // para baixo, empenas (triângulos) nas duas pontas, caibros + cumeeira fundidos num só objeto. As paredes do sótão
 // param em rh (tampas de tábua no topo); o telhado começa no alto das paredes externas e sobe ROOF_RISE.
-export const ROOF_RISE = 2.6;
-export function roofHeightAt(map, z) { // altura (relativa ao piso do sótão) do telhado na coordenada z (m)
-  const b = atticRoofBox(map); if (!b) return LEVELS[3].h;
-  const zs = (b.z0 + 1) * CELL, zn = b.z1 * CELL, zc = (zs + zn) / 2;
-  return LEVELS[3].h + ROOF_RISE * Math.max(0, 1 - Math.abs(z - zc) / (zc - zs));
-}
 function buildAtticRoof(map, parent, M) {
   const b = atticRoofBox(map); if (!b) return null;
   const y0 = LEVELS[3].y, ye = y0 + LEVELS[3].h, yr = ye + ROOF_RISE;

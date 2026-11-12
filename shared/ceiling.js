@@ -4,7 +4,7 @@
 // andar de cima pertencente a uma escada cujo andar de baixo é este). Nesse caso a cobertura é a do andar de cima
 // (que por sua vez tem teto). No sótão (andar 3) a "cobertura" é o telhado de duas águas.
 // Antes da v9b as células HOLE e STAIR nunca recebiam teto → poço de escada aberto para o céu.
-import { T, W, D } from './config.js';
+import { T, W, D, CELL, LEVELS } from './config.js';
 
 export function openAbove(map, L, x, z) {
   if (L >= 3) return false;
@@ -51,4 +51,36 @@ export function ceilingGaps(map) {
     }
   }
   return gaps;
+}
+
+// v9b: telhado do sótão (compartilhado com o render) e altura livre para a criatura se abaixar nas portas
+export const ROOF_RISE = 2.6;
+export function roofHeightAt(map, z) { // altura (relativa ao piso do sótão) do telhado na coordenada z (m)
+  const b = map._roofBox || (map._roofBox = atticRoofBox(map)); if (!b) return LEVELS[3].h;
+  const zs = (b.z0 + 1) * CELL, zn = b.z1 * CELL, zc = (zs + zn) / 2;
+  return LEVELS[3].h + ROOF_RISE * Math.max(0, 1 - Math.abs(z - zc) / (zc - zs));
+}
+export const doorHeightOf = (L) => Math.min(LEVELS[L].h - 0.45, 2.75);
+// Y do mundo do que fica acima da célula: verga da porta/arco, teto do cômodo, teto do andar de cima (poço de escada)
+export function overheadY(map, L, x, z) {
+  if (x < 0 || z < 0 || x >= W || z >= D) return 99;
+  const i = z * W + x, lv = map.levels[L], t = lv.grid[i];
+  if (t === T.WALL || t === T.VOID) return 99;
+  if (t === T.DOOR || t === T.EXIT || (t === T.FLOOR && lv.room[i] < 0)) return LEVELS[L].y + doorHeightOf(L);
+  let k = L; while (k < 3 && openAbove(map, k, x, z)) k++;
+  return LEVELS[k].y + (k === 3 ? roofHeightAt(map, (z + 0.5) * CELL) : LEVELS[k].h);
+}
+// menor Y livre num raio r em volta de (px,pz) e ao longo de 'ahead' m na direção (dx,dz)
+export function headroomY(map, L, px, pz, dx = 0, dz = 0, r = 0.6, ahead = 1.4) {
+  let m = 99;
+  const steps = Math.ceil(ahead / CELL);
+  for (let s = 0; s <= steps; s++) {
+    const cx = px + dx * s * CELL, cz = pz + dz * s * CELL, rr = Math.ceil(r / CELL);
+    const gx = Math.floor(cx / CELL), gz = Math.floor(cz / CELL);
+    for (let a = -rr; a <= rr; a++) for (let b = -rr; b <= rr; b++) {
+      if ((a * a + b * b) * CELL * CELL > r * r + 0.13) continue;
+      const y = overheadY(map, L, gx + a, gz + b); if (y < m) m = y;
+    }
+  }
+  return m;
 }
