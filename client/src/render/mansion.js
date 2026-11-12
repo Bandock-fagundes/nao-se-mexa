@@ -9,6 +9,7 @@ import { buildExterior } from './exterior.js';
 import { buildFireGlow, windowSkyMaterial, windowSkyGeometry, windowGlassMaterial, moonPatchMaterial, moonPatchGeometry } from './fx.js';
 import { SURFACE_Y } from '../../../shared/mapgen.js';
 import { makeRng } from '../../../shared/rng.js';
+import { ceilingPlan, atticRoofBox } from '../../../shared/ceiling.js';
 
 const OPEN = new Set([T.FLOOR, T.DOOR, T.STAIR, T.LOW, T.TALL, T.EXIT, T.HOLE, T.CURTAIN]);
 
@@ -54,6 +55,7 @@ export function buildMansion(map, world, M) {
     const uc = alongZ ? wdw.z : wdw.x;
     holes[wdw.level].push({ nx: Math.round(sx), nz: Math.round(Math.cos(wdw.rot)), plane: alongZ ? wdw.x : wdw.z, u0: uc - ww / 2, u1: uc + ww / 2, y0: wy - wh / 2, y1: wy + wh / 2 });
   }
+  const cplan = ceilingPlan(map);
   for (let L = 0; L < 4; L++) {
     const y0 = LEVELS[L].y, rh = LEVELS[L].h, H = wallTopFor(L), dh = doorHeight(L);
     const builders = new Map();
@@ -78,13 +80,24 @@ export function buildMansion(map, world, M) {
       const under = (t === T.LOW) ? 0.7 : 1;
       gb(fm).quad([X0, y0, Z1], [X1, y0, Z1], [X1, y0, Z0], [X0, y0, Z0], [0, 1, 0], [X0 / us, Z1 / us], [X1 / us, Z1 / us], [X1 / us, Z0 / us], [X0 / us, Z0 / us],
         vAO(x, z + 1) * under, vAO(x + 1, z + 1) * under, vAO(x + 1, z) * under, vAO(x, z) * under);
-      // teto (se não houver vão de escada acima)
-      const above = L < 3 ? get(L + 1, x, z) : T.WALL;
-      if (above !== T.HOLE && above !== T.STAIR) {
-        const yc = y0 + rh, cm = L === 3 ? 'planks' : L === 0 ? 'ceilingDark' : 'ceiling';
-        const cs = 2.5;
-        const a = (vx, vz) => 0.55 + 0.45 * vAO(vx, vz);
+    }
+    // v9b: tetos pelo plano compartilhado (shared/ceiling.js) — inclui as células HOLE/STAIR do andar de cima do poço
+    // de escada (antes ficavam sem teto → céu/árvores vistos por dentro). Sótão: telhado de duas águas (buildAtticRoof).
+    if (L < 3) {
+      const cp = cplan[L], yc = y0 + rh, cm = L === 0 ? 'ceilingDark' : 'ceiling', cs = 2.5;
+      const a = (vx, vz) => 0.55 + 0.45 * vAO(vx, vz);
+      for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) {
+        if (!cp[z * W + x]) continue;
+        const X0 = x * CELL, X1 = X0 + CELL, Z0 = z * CELL, Z1 = Z0 + CELL;
         gb(cm).quad([X0, yc, Z0], [X1, yc, Z0], [X1, yc, Z1], [X0, yc, Z1], [0, -1, 0], [X0 / cs, Z0 / cs], [X1 / cs, Z0 / cs], [X1 / cs, Z1 / cs], [X0 / cs, Z1 / cs], a(x, z), a(x + 1, z), a(x + 1, z + 1), a(x, z + 1));
+      }
+    } else {
+      // sótão: as paredes param em rh e o telhado sobe acima delas → tampa de tábua no topo de cada parede
+      const yt = y0 + rh;
+      for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) {
+        if (get(L, x, z) !== T.WALL) continue;
+        const X0 = x * CELL, X1 = X0 + CELL, Z0 = z * CELL, Z1 = Z0 + CELL;
+        gb('planks').quad([X0, yt, Z1], [X1, yt, Z1], [X1, yt, Z0], [X0, yt, Z0], [0, 1, 0], [X0 / 2.4, Z1 / 2.4], [X1 / 2.4, Z1 / 2.4], [X1 / 2.4, Z0 / 2.4], [X0 / 2.4, Z0 / 2.4], 0.5, 0.5, 0.5, 0.5);
       }
     }
     // ---------- paredes ----------
@@ -174,6 +187,8 @@ export function buildMansion(map, world, M) {
       addChunked(levels[L], geo, M[key], key !== 'ceiling' && key !== 'ceilingDark' && !key.startsWith('floor'));
     }
   }
+
+  res.roof = buildAtticRoof(map, levels[3], M);
 
   // ---------- escadas ----------
   const stairGroups = [];
@@ -421,7 +436,8 @@ export function buildMansion(map, world, M) {
       lamp.bulb = new THREE.Mesh(new THREE.SphereGeometry(0.012, 6, 6), glowMat); lamp.bulb.scale.y = 2; lamp.bulb.position.y = 0.15; g.add(lamp.bulb);
       lamp.y = l.y + 0.25;
     } else if (l.kind === 'bulb') {
-      C(g, 0.004, 0.004, 0.5, M.black, 0, 0.25, 0, 0xffffff, 4);
+      const cord = l.level === 3 ? Math.max(0.5, LEVELS[3].y + roofHeightAt(map, l.z) - l.y) : 0.5; // v9b: fio até o telhado
+      C(g, 0.004, 0.004, cord, M.black, 0, cord / 2, 0, 0xffffff, 4);
       lamp.bulb = new THREE.Mesh(new THREE.SphereGeometry(0.04, 10, 8), glowMat); g.add(lamp.bulb);
       const cage = mesh(new THREE.CylinderGeometry(0.03, 0.12, 0.08, 12, 1, true), M.iron); cage.position.y = 0.06; g.add(cage);
     } else if (l.kind === 'emergency') {
@@ -686,4 +702,46 @@ export function buildWindowParts(g, wdw, wi, M) {
   let patch = null;
   if (!wdw.curtain) { patch = moonPatchGeometry(ww, 0.35, wdw.small ? 1.4 : 2.3); patch.translate(0, 0.011, 0); }
   return { frame: fr, sky, glass, patch };
+}
+
+// v9b: telhado de duas águas do sótão (cumeeira ao longo de X, no meio de Z). Superfície interna de tábuas voltada
+// para baixo, empenas (triângulos) nas duas pontas, caibros + cumeeira fundidos num só objeto. As paredes do sótão
+// param em rh (tampas de tábua no topo); o telhado começa no alto das paredes externas e sobe ROOF_RISE.
+export const ROOF_RISE = 2.6;
+export function roofHeightAt(map, z) { // altura (relativa ao piso do sótão) do telhado na coordenada z (m)
+  const b = atticRoofBox(map); if (!b) return LEVELS[3].h;
+  const zs = (b.z0 + 1) * CELL, zn = b.z1 * CELL, zc = (zs + zn) / 2;
+  return LEVELS[3].h + ROOF_RISE * Math.max(0, 1 - Math.abs(z - zc) / (zc - zs));
+}
+function buildAtticRoof(map, parent, M) {
+  const b = atticRoofBox(map); if (!b) return null;
+  const y0 = LEVELS[3].y, ye = y0 + LEVELS[3].h, yr = ye + ROOF_RISE;
+  const xw = (b.x0 + 1) * CELL, xe = b.x1 * CELL, zs = (b.z0 + 1) * CELL, zn = b.z1 * CELL, zc = (zs + zn) / 2;
+  const gb = new GB(), us = 2.4, sl = Math.hypot(zc - zs, ROOF_RISE);
+  // água sul (z pequeno) e água norte: u ao longo de x, v ao longo da inclinação (tábuas descendo o telhado)
+  for (let x = xw; x < xe - 1e-6; x += 2) {
+    const x1 = Math.min(xe, x + 2);
+    gb.quad([x, ye, zs], [x1, ye, zs], [x1, yr, zc], [x, yr, zc], [0, -(zc - zs) / sl, ROOF_RISE / sl], [x / us, 0], [x1 / us, 0], [x1 / us, sl / us], [x / us, sl / us], 0.55, 0.55, 0.35, 0.35);
+    gb.quad([x1, ye, zn], [x, ye, zn], [x, yr, zc], [x1, yr, zc], [0, -(zn - zc) / sl, -ROOF_RISE / sl], [x1 / us, 0], [x / us, 0], [x / us, sl / us], [x1 / us, sl / us], 0.55, 0.55, 0.35, 0.35);
+  }
+  // empenas (oeste olha +x, leste olha -x)
+  gb.quad([xw, ye, zn], [xw, ye, zs], [xw, yr, zc], [xw, yr, zc], [1, 0, 0], [zn / us, 0], [zs / us, 0], [zc / us, ROOF_RISE / us], [zc / us, ROOF_RISE / us], 0.5, 0.5, 0.35, 0.35);
+  gb.quad([xe, ye, zs], [xe, ye, zn], [xe, yr, zc], [xe, yr, zc], [-1, 0, 0], [zs / us, 0], [zn / us, 0], [zc / us, ROOF_RISE / us], [zc / us, ROOF_RISE / us], 0.5, 0.5, 0.35, 0.35);
+  const g = new THREE.Group(); g.name = 'atticRoof'; parent.add(g);
+  const geo = gb.build(); if (geo) addChunked(g, geo, M.planks, true);
+  // caibros (0,07 × 0,14 m) a cada ~1,2 m + cumeeira; começam 0,6 m depois do beiral (não entram nas paredes internas)
+  const fr = new THREE.Group(); g.add(fr);
+  const ang = Math.atan2(ROOF_RISE, zc - zs), dep = 0.14, skip = 0.6, len = (zc - zs - skip) / Math.cos(ang);
+  const n = Math.max(2, Math.round((xe - xw) / 1.2));
+  for (let i = 0; i <= n; i++) {
+    const x = xw + 0.06 + (xe - xw - 0.12) * i / n;
+    for (const s of [1, -1]) {
+      const zm = s > 0 ? zs + skip + (zc - zs - skip) / 2 : zn - skip - (zn - zc - skip) / 2;
+      const ym = ye + ROOF_RISE * (1 - Math.abs(zm - zc) / (zc - zs)) - dep / 2 / Math.cos(ang);
+      const r = mesh(new THREE.BoxGeometry(0.07, dep, len), M.darkWood, 0x3a2616); r.position.set(x, ym, zm); r.rotation.x = s > 0 ? -ang : ang; fr.add(r);
+    }
+  }
+  const ridge = mesh(new THREE.BoxGeometry(xe - xw, 0.16, 0.1), M.darkWood, 0x34200f); ridge.position.set((xw + xe) / 2, yr - 0.1, zc); fr.add(ridge);
+  mergeLocal(fr);
+  return { g, xw, xe, zs, zn, zc, ye, yr };
 }
