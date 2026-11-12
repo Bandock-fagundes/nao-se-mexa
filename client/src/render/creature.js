@@ -76,7 +76,14 @@ function vertexTint(q, rr, ex) {
   r *= 1 - grime * 0.8; g *= 1 - grime * 0.85; b *= 1 - grime * 0.9;
   const thin = smooth(0.05, 0.012, rr);
   r *= 1 + thin * 0.06; g *= 1 - thin * 0.12; b *= 1 - thin * 0.16;
-  const cav = clamp(ex * 9, -0.32, 0.08);
+  // v9b: pele manchada (zonas amareladas/acinzentadas/arroxeadas) e VEIAS finas azul-arroxeadas sob a pele
+  const mot = vnoise(q.x * 9 + 3, q.y * 9, q.z * 9) * 0.6 + vnoise(q.x * 23, q.y * 23 + 5, q.z * 23) * 0.4;
+  r *= 1 + mot * 0.07; g *= 1 + mot * 0.05; b *= 1 - mot * 0.04;
+  const bruise = Math.max(0, vnoise(q.x * 4.3 + 11, q.y * 4.3, q.z * 4.3) - 0.35) * 1.4;
+  r *= 1 - bruise * 0.12; g *= 1 - bruise * 0.22; b *= 1 - bruise * 0.06;
+  const vn = 1 - Math.abs(vnoise(q.x * 14 + 1.7, q.y * 6.5, q.z * 14 - 2.1)), vein = Math.pow(vn, 14) * (0.55 + 0.45 * smooth(0.04, 0.012, rr));
+  r *= 1 - vein * 0.32; g *= 1 - vein * 0.3; b *= 1 - vein * 0.12;
+  const cav = clamp(ex * 11, -0.42, 0.08); // cavidades (entre costelas, sulcos, tendões) mais escuras
   r *= 1 + cav; g *= 1 + cav * 1.1; b *= 1 + cav;
   return [r, g, b];
 }
@@ -226,6 +233,12 @@ function buildGeometry(lo = false) {
     return { p: V(P.getX(bi), P.getY(bi), P.getZ(bi)), n: V(N.getX(bi), N.getY(bi), N.getZ(bi)).normalize() };
   };
   if (typeof globalThis !== 'undefined' && globalThis.__crSurf) globalThis.__crSurf(surf);
+  // v9b: CLAVÍCULAS saltadas (osso fino sob a pele, do esterno ao ombro) — meio enterradas na superfície do tronco
+  for (const s of [1, -1]) {
+    const k = s > 0 ? 'L' : 'R', a0 = surf(V(s * 0.04, 2.5, 0.34)), a1 = surf(V(s * 0.17, 2.53, 0.33)), a2 = surf(V(s * 0.29, 2.55, 0.26));
+    const sink = (q, r) => q.p.clone().addScaledVector(q.n, r * 0.15);
+    skin.tube([pt(sink(a0, 0.012), 0.012, mix('chest', 'clav' + k, 0.3)), pt(sink(a1, 0.011), 0.011, mix('chest', 'clav' + k, 0.6)), pt(sink(a2, 0.014), 0.014, one('clav' + k))], { radial: LO ? 6 : 8, sub: 3, noise: 0.001 });
+  }
   // ----- cabeça alongada, sem olhos, com crânio marcado -----
   skin.tube([
     pt(V(0, 2.74, 0.44), 0.07, mix('neck2', 'head', 0.6)),
@@ -243,7 +256,11 @@ function buildGeometry(lo = false) {
     },
   });
   // cavidades onde seriam olhos (vazias, úmidas) (v2 fase 2: um pouco maiores)
-  for (const s of [1, -1]) { const g = new THREE.SphereGeometry(0.036, 12, 8); g.scale(0.9, 0.6, 0.5); g.translate(s * 0.1, 2.88, 0.7); maw.rigid(g, BI.head); }
+  // v9b: órbitas maiores e mais fundas (o fundo escuro e úmido recua para dentro do crânio) + arco ósseo acima
+  for (const s of [1, -1]) {
+    { const g = new THREE.SphereGeometry(0.042, 12, 8); g.scale(0.95, 0.68, 0.6); g.translate(s * 0.098, 2.88, 0.695); maw.rigid(g, BI.head); }
+    if (!LO) { const g = new THREE.CylinderGeometry(0.009, 0.009, 0.075, 6); g.rotateZ(Math.PI / 2 + s * 0.25); g.translate(s * 0.1, 2.915, 0.712); skin.rigid(g, BI.head); }
+  }
   // ----- boca vertical: interior úmido + gengivas + lábios nas mandíbulas + dentes irregulares -----
   { const g = new THREE.SphereGeometry(0.1, 24, 16); g.scale(0.42, 1.38, 0.62); g.rotateX(-0.5); g.translate(0, 2.7, 0.785); maw.rigid(g, BI.head); }
   { const g = new THREE.SphereGeometry(0.04, 10, 8); g.scale(0.6, 1.4, 0.6); g.translate(0, 2.68, 0.76); maw.rigid(g, BI.head); } // garganta
@@ -315,9 +332,12 @@ function buildGeometry(lo = false) {
       pt(V(s * 0.5, 1.12, 0.44), 0.038, mix('forearm' + k, 'hand' + k, 0.6), 1.3, 0.8),
       pt(V(s * 0.5, 1.02, 0.465), 0.044, one('hand' + k), 1.55, 0.55),
       pt(V(s * 0.5, 0.965, 0.474), 0.046, one('hand' + k), 1.6, 0.5),
-    ], { radial: 18, sub: 7, noise: 0.005, rScale: 0.78, extra: (a, u, p, d, r0) => (u > 0.1 && u < 0.8 ? sinew(a, u, p, d, r0) : 0) });
+    ], { radial: 18, sub: 7, noise: 0.005, rScale: 0.72, extra: (a, u, p, d, r0) => (u > 0.1 && u < 0.8 ? sinew(a, u, p, d, r0) : 0) });
     // cotovelo ósseo e pulso (v6b: menor e mais afundado — junta discreta)
-    { const g = new THREE.SphereGeometry(0.027, 12, 10); g.scale(1, 1.25, 1); g.translate(s * 0.47, 1.84, 0.315); skin.rigid(g, BI['forearm' + k]); }
+    // v9b: cotovelo ÓSSEO (olécrano saltado para trás) + nós do punho (cabeça da ulna e do rádio) — juntas que se leem
+    { const g = new THREE.SphereGeometry(0.03, 12, 10); g.scale(0.9, 1.3, 1.05); g.translate(s * 0.472, 1.845, 0.3); skin.rigid(g, BI['forearm' + k]); }
+    { const g = new THREE.SphereGeometry(0.018, 10, 8); g.scale(1, 1.2, 1); g.translate(s * 0.522, 1.14, 0.43); skin.rigid(g, BI['forearm' + k]); }
+    if (!LO) { const g = new THREE.SphereGeometry(0.014, 8, 6); g.translate(s * 0.48, 1.15, 0.455); skin.rigid(g, BI['forearm' + k]); }
     // dedos longos e ossudos: 2 falanges articuladas com nós salientes + garras curvas escuras
     for (let f = 0; f < 4; f++) {
       const K = knuckle(s, f), M = midJoint(s, f), T = tipPt(s, f);
@@ -355,8 +375,9 @@ function buildGeometry(lo = false) {
       pt(V(s * 0.21, 0.36, -0.12), 0.044, mix('shin' + k, 'foot' + k, 0.5)),
       pt(V(s * 0.215, 0.2, 0.0), 0.037, one('foot' + k)),
       pt(V(s * 0.22, 0.07, 0.12), 0.042, mix('foot' + k, 'toes' + k, 0.4), 1.3, 0.8),
-    ], { radial: 18, sub: 7, noise: 0.007, rScale: 0.8, extra: (a, u, p, d, r0) => (u > 0.05 && u < 0.85 ? sinew(a, u, p, d, r0) * 0.8 : 0) });
-    { const g = new THREE.SphereGeometry(0.038, 12, 10); g.translate(s * 0.2, 0.96, 0.315); skin.rigid(g, BI['shin' + k]); }
+    ], { radial: 18, sub: 7, noise: 0.007, rScale: 0.75, extra: (a, u, p, d, r0) => (u > 0.05 && u < 0.85 ? sinew(a, u, p, d, r0) * 0.8 : 0) });
+    { const g = new THREE.SphereGeometry(0.04, 12, 10); g.scale(1.05, 1.15, 0.8); g.translate(s * 0.2, 0.965, 0.318); skin.rigid(g, BI['shin' + k]); } // v9b: patela ossuda
+    if (!LO) for (const e of [-1, 1]) { const g = new THREE.SphereGeometry(0.02, 8, 6); g.translate(s * 0.2 + e * 0.032, 0.93, 0.29); skin.rigid(g, BI['shin' + k]); } // côndilos
     { const g = new THREE.SphereGeometry(0.03, 10, 8); g.scale(1, 1, 1.3); g.translate(s * 0.21, 0.37, -0.15); skin.rigid(g, BI['foot' + k]); } // calcanhar (jarrete)
     for (let t = -1; t <= 1; t++) {
       const tx = s * 0.22 + t * 0.04;
@@ -456,14 +477,16 @@ function makeSkinMaterial(M) {
   const T = M.T.creatureSkin;
   const mat = new THREE.MeshPhysicalMaterial({
     map: T.map, normalMap: T.normalMap, roughnessMap: T.roughnessMap, vertexColors: true,
-    color: 0x9a978c, roughness: 0.88, metalness: 0, normalScale: new THREE.Vector2(0.75, 0.75), envMapIntensity: 0.25,
-    sheen: 0.35, sheenRoughness: 0.6, sheenColor: new THREE.Color(0x6e5c56),
+    color: 0xa9a598, roughness: 0.7, metalness: 0, normalScale: new THREE.Vector2(0.95, 0.95), envMapIntensity: 0.3,
+    sheen: 0.3, sheenRoughness: 0.55, sheenColor: new THREE.Color(0x6e5c56),
+    // v9b: película oleosa/úmida (brilho fino e irregular por cima da pele fosca — a roughnessMap varia por baixo)
+    clearcoat: 0.22, clearcoatRoughness: 0.42,
   });
   // translucidez barata: luz que passa pelas bordas finas (só existe onde há luz — no escuro continua invisível)
   mat.onBeforeCompile = (sh) => {
     sh.fragmentShader = sh.fragmentShader.replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
       { float rimT = pow(1.0 - saturate(dot(normal, normalize(vViewPosition))), 2.5);
-        reflectedLight.indirectDiffuse += reflectedLight.directDiffuse * rimT * vec3(0.5, 0.26, 0.2) * 0.45; }`);
+        reflectedLight.indirectDiffuse += reflectedLight.directDiffuse * rimT * vec3(0.55, 0.24, 0.18) * 0.6; }`); // v9b: contraluz avermelhado (pele fina) um pouco mais forte
   };
   return mat;
 }
@@ -533,6 +556,9 @@ const HITCH_GROUPS = {
   kids: ['kidA1', 'kidA2', 'kidA3', 'kidB1', 'kidB2', 'kidB3', 'kidHeadA', 'kidHeadB'],
 };
 const CRACK_BONES = { head: ['neck2', 'neck', 'head'], armL: ['clavL', 'upperArmL', 'handL'], armR: ['clavR', 'upperArmR', 'handR'], torso: ['spine2', 'spine3', 'neck2'], kids: ['kidA1', 'kidB2', 'kidHeadB'] };
+// v9b: amplitude (rad) do micro-tremor por osso
+const TREMOR = { head: 0.012, neck2: 0.008, handL: 0.014, handR: 0.014, thumbL: 0.03, thumbR: 0.03 };
+for (const k of ['L', 'R']) for (let f = 0; f < 4; f++) { TREMOR['f' + f + 'a' + k] = 0.022; TREMOR['f' + f + 'b' + k] = 0.03; TREMOR['f' + f + 'c' + k] = 0.035; }
 // estados que se misturam por peso (crossfade ~0,3 s)
 const LAYERS = ['hear', 'turn', 'stop', 'sniff', 'inspect', 'look', 'attack', 'kill', 'door', 'recover', 'investigate_walk', 'run'];
 // pernas: comprimentos e ângulos de repouso no plano sagital (ψ = ângulo a partir da vertical para baixo, + para frente)
@@ -920,7 +946,9 @@ export class CreatureAnimator {
       const r0 = this.rnd();
       const g = rf > 0.5 ? (r0 < 0.5 ? 'head' : 'kids') : r0 < 0.3 ? 'head' : r0 < 0.47 ? 'armL' : r0 < 0.6 ? 'armR' : r0 < 0.82 ? 'torso' : 'kids';
       const hold = {}; for (const n of HITCH_GROUPS[g]) hold[n] = { x: this.spr[n].x.x, y: this.spr[n].y.x, z: this.spr[n].z.x };
-      this.hitch = { g, hold, t: 0, dur: rf > 0.5 ? 0.06 + this.rnd() * 0.08 : 0.1 + this.rnd() * 0.22 };
+      // v9b: parada, às vezes congela de verdade (0,4–1,3 s) antes de estalar — pausa irregular, depois movimento súbito
+      const longFreeze = gw < 0.3 && (g === 'torso' || g === 'head') && this.rnd() < 0.45;
+      this.hitch = { g, hold, t: 0, dur: rf > 0.5 ? 0.06 + this.rnd() * 0.08 : longFreeze ? 0.4 + this.rnd() * 0.9 : 0.1 + this.rnd() * 0.22 };
     }
     if (this.hitch) {
       const H = this.hitch; H.t += dt;
@@ -939,6 +967,7 @@ export class CreatureAnimator {
     // ---------- molas → ossos ----------
     if (this.first) for (const n in this.spr) for (const a of ['x', 'y', 'z']) { this.spr[n][a].x = P[n][a]; this.spr[n][a].v = 0; }
     const hearSnap = Math.max(W('hear'), W('turn'));
+    const trK = (1 + 1.4 * W('hear') + 0.8 * W('recover') + 0.6 * (1 - gw)) * (1 - 0.7 * W('kill')); this.trPh = this.trPh || {};
     for (const n in this.spr) {
       let [om, ze] = sprOf(n);
       if (n === 'head' || n === 'neck') om *= 1 + hearSnap * 1.2; // cabeça "estala" na direção do som
@@ -946,7 +975,12 @@ export class CreatureAnimator {
       if (this.snapT > 0 && this.snapSet && this.snapSet.includes(n)) { om *= 2.6; ze *= 0.55; } // estala até a pose
       const st = this.spr[n];
       const x = springStep(st.x, P[n].x, om, ze, dt), y = springStep(st.y, P[n].y, om, ze, dt), z = springStep(st.z, P[n].z, om, ze, dt);
-      this.e.set(x, y, z, 'XYZ'); b[n].quaternion.setFromEuler(this.e);
+      // v9b: micro-tremor (depois das molas, para não ser alisado): dedos, mãos, cabeça e pescoço tremem de leve
+      const tr = TREMOR[n] ? TREMOR[n] * trK : 0;
+      if (tr) { const ph = this.trPh[n] ?? (this.trPh[n] = hash3(n.length, n.charCodeAt(0), n.charCodeAt(n.length - 1)) * 50);
+        this.e.set(x + n1(t * 17 + ph, 81) * tr, y + n1(t * 13 + ph, 82) * tr * 0.6, z + n1(t * 19 + ph, 83) * tr, 'XYZ'); }
+      else this.e.set(x, y, z, 'XYZ');
+      b[n].quaternion.setFromEuler(this.e);
     }
     this.jaw.x = Math.max(0, springStep(this.jaw, jaw, SPR.jaw[0], SPR.jaw[1], dt));
     b.jawL.quaternion.setFromEuler(this.e.set(0, this.jaw.x, 0)); b.jawR.quaternion.setFromEuler(this.e.set(0, -this.jaw.x, 0));
