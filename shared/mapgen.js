@@ -1,7 +1,7 @@
 // Gerador procedural controlado da mansão (determinístico por semente + versão).
 // Mesmo módulo é usado pelo servidor e pelo cliente.
 import { makeRng, hashString } from './rng.js';
-import { GEN_VERSION, FALLBACK_SEED, CELL, W, D, ROWS, STAIR_LEN, STAIR_W, STAIR_SLOT, LEVELS, T, GRAND_STAIR_W, MANSION_SIZES } from './config.js';
+import { GEN_VERSION, FALLBACK_SEED, CELL, W, D, ROWS, STAIR_LEN, STAIR_W, STAIR_SLOT, LEVELS, T, GRAND_STAIR_W, MANSION_SIZES, LIGHTING } from './config.js';
 
 export const ROOM_INFO = {
   // floor = acústica (passos/rangidos); look = desenho do piso (v3: madeira escura envelhecida, mármore rachado no hall)
@@ -914,6 +914,35 @@ class Gen {
     }
     return null;
   }
+  // v9b: casa muito mais escura — só ~LIGHTING.lampRoomKeep dos cômodos mantêm luz (o resto: luminárias apagadas,
+  // velas sem chama); as que ficam são mais fracas e de alcance curto. Lareira e candelabro da mesa ficam acesos.
+  // RNG separado (não muda o resto da geração).
+  dimLights() {
+    const m = this.map, rng = makeRng(hashString(m.seed + '|luzes|' + m.attempt + '|' + this.size));
+    const roomOfLamp = (l) => {
+      if (l.prop !== undefined && m.props[l.prop]) return m.props[l.prop].room;
+      const ox = l.rot !== undefined ? Math.sin(l.rot) * 0.3 : 0, oz = l.rot !== undefined ? Math.cos(l.rot) * 0.3 : 0;
+      const x = Math.floor((l.x + ox) / CELL), z = Math.floor((l.z + oz) / CELL);
+      if (x < 0 || z < 0 || x >= W || z >= D) return -1;
+      return m.levels[l.level].room[z * W + x];
+    };
+    const groups = new Map();
+    m.lamps.forEach((l, i) => { if (l.kind === 'fire' || l.kind === 'flame') return; const r = roomOfLamp(l); const k = r >= 0 ? 'r' + r : 'l' + i; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(l); });
+    const keys = rng.shuffle([...groups.keys()].sort());
+    const nKeep = Math.round(keys.length * LIGHTING.lampRoomKeep);
+    keys.forEach((k, idx) => {
+      const ls = groups.get(k);
+      if (idx >= nKeep) { for (const l of ls) l.state = 'off'; return; }
+      let lit = 0;
+      for (const l of ls) {
+        if (l.state === 'off') continue;
+        if (lit > 0 && rng.chance(LIGHTING.lampExtraOff)) { l.state = 'off'; continue; }
+        lit++;
+      }
+      if (!lit) { const l = ls.find(l => l.kind !== 'candle') || ls[0]; l.state = 'on'; }
+    });
+    for (const l of m.lamps) if (l.kind !== 'fire') { l.intensity *= LIGHTING.lampIntensity; l.range *= LIGHTING.lampRange; }
+  }
   lightRoom(room) {
     const m = this.map, rng = this.rng, L = room.level, base = LEVELS[L].y, h = LEVELS[L].h;
     const state = () => { const r = rng.next(); return r < 0.18 ? 'off' : r < 0.36 ? 'flicker' : 'on'; };
@@ -986,6 +1015,7 @@ export function tryGenerate(seed, attempt, size = 3) {
   g.placeFurniture();
   g.decorate();
   g.resolveWallDecor();
+  g.dimLights();
   g.collectSurfaces();
   if (!g.creatureSpawn()) return null;
   // ids de sala para células de porta/arco (para superfície/sons) — usa sala vizinha

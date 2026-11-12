@@ -19,6 +19,7 @@ import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { SMAAPass } from 'three/examples/jsm/postprocessing/SMAAPass.js';
 import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js';
 import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
+import { LIGHTING } from '../../../shared/config.js';
 
 // cap = máximo de pixels da imagem 3D (antes do upscale); minScale = menor escala que a resolução dinâmica usa
 export const QUALITY = {
@@ -79,21 +80,23 @@ export class Renderer {
     // antialias do canvas desligado: a cena vai para alvos de render (o MSAA do canvas não pegava nada) e o AA é FXAA/SMAA
     const r = this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', preserveDrawingBuffer: !!settings.preserve });
     r.outputColorSpace = THREE.SRGBColorSpace;
-    r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 0.9;
+    r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = LIGHTING.exposure; // v9b: config compartilhada
     r.shadowMap.enabled = this.q.shadows; r.shadowMap.type = THREE.PCFSoftShadowMap;
     r.setPixelRatio(1); // controlamos o tamanho em pixels nós mesmos (saída e render)
     container.appendChild(r.domElement);
     r.domElement.id = 'gl';
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x050608);
-    this.scene.fog = new THREE.FogExp2(0x07080b, 0.05);
+    // v9b: névoa escura exponencial bem mais densa (ver LIGHTING.fog) — além de poucos metros tudo some no escuro
+    this.scene.background = new THREE.Color(LIGHTING.background);
+    this.scene.fog = new THREE.FogExp2(LIGHTING.fog.color, LIGHTING.fog.density[1]);
     // v4: far 120 → 50 m. Com a névoa exp² 0,05 nada além de ~35 m aparece (fator < 5%), e os pedaços
     // da casa mais longe que isso deixam de ser desenhados (recorte por frustum).
     this.camera = new THREE.PerspectiveCamera(settings.fov || 72, 1, 0.04, 50);
     this.scene.add(this.camera);
     this.handScene = new THREE.Scene();
-    this.hemi = new THREE.HemisphereLight(0x4a5674, 0x1a130c, 0.5); this.scene.add(this.hemi); // v2: mais escuro (antes 0.7)
-    this.amb = new THREE.AmbientLight(0x22262f, 0.22); this.scene.add(this.amb);
+    // v9b: quase sem luz ambiente — sem lanterna só se adivinham as formas por perto
+    this.hemi = new THREE.HemisphereLight(LIGHTING.hemi.sky, LIGHTING.hemi.ground, LIGHTING.hemi.intensity); this.scene.add(this.hemi);
+    this.amb = new THREE.AmbientLight(LIGHTING.ambient.color, LIGHTING.ambient.intensity); this.scene.add(this.amb);
     // luzes da cena da mão
     this.handHemi = new THREE.HemisphereLight(0x8090b0, 0x2a1c14, 0.9); this.handScene.add(this.handHemi);
     this.handKey = new THREE.DirectionalLight(0xffd8b0, 0.6); this.handKey.position.set(0.5, 1, 0.6); this.handScene.add(this.handKey);
@@ -251,13 +254,13 @@ export class Renderer {
 }
 
 // Cone volumétrico barato (aditivo) para o feixe da lanterna
-export function makeBeamCone(length = 7.5, angle = 0.4, strength = 0.07) {
+export function makeBeamCone(length = 7.5, angle = 0.4, strength = 0.07, color = 0xe6eeff) {
   const radius = Math.tan(angle) * length;
   const geo = new THREE.ConeGeometry(radius, length, 32, 8, true);
   geo.translate(0, -length / 2, 0); geo.rotateX(-Math.PI / 2); // ápice na origem, abrindo em -Z
   const mat = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
-    uniforms: { uStrength: { value: strength }, uLen: { value: length }, uColor: { value: new THREE.Color(0xe6eeff) }, uTime: { value: 0 } },
+    uniforms: { uStrength: { value: strength }, uLen: { value: length }, uColor: { value: new THREE.Color(color) }, uTime: { value: 0 } },
     vertexShader: `varying vec3 vPos; varying vec3 vN; varying vec3 vView; varying vec3 vAxis; void main(){ vPos = position; vec4 mv = modelViewMatrix * vec4(position,1.0); vView = normalize(-mv.xyz); vN = normalize(normalMatrix * normal); vAxis = normalize((modelViewMatrix * vec4(0.0,0.0,-1.0,0.0)).xyz); gl_Position = projectionMatrix * mv; }`,
     fragmentShader: `uniform float uStrength; uniform float uLen; uniform vec3 uColor; uniform float uTime; varying vec3 vPos; varying vec3 vN; varying vec3 vView; varying vec3 vAxis;
       float h(vec3 p){ return fract(sin(dot(p, vec3(12.9898,78.233,37.719))) * 43758.5453); }
@@ -271,3 +274,30 @@ export function makeBeamCone(length = 7.5, angle = 0.4, strength = 0.07) {
   const m = new THREE.Mesh(geo, mat); m.frustumCulled = false; m.renderOrder = 10;
   return m;
 }
+
+// v9b: "cookie" da lanterna (SpotLight.map; só funciona com sombra ligada): hotspot central, anel fraco de refletor,
+// borda macia e um pouco de poeira/risco na lente. Sem sombra (Baixa) a lanterna usa só a penumbra.
+export function flashlightCookie(size = 256) {
+  if (typeof document === 'undefined') return null;
+  const c = document.createElement('canvas'); c.width = c.height = size; const g = c.getContext('2d'), h = size / 2;
+  const id = g.createImageData(size, size), d = id.data;
+  let s = 1234567; const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const r = Math.hypot(x + 0.5 - h, y + 0.5 - h) / h;
+    let v = 0.55 + 0.45 * Math.exp(-r * r / 0.06);              // hotspot
+    v += 0.07 * Math.exp(-Math.pow((r - 0.62) / 0.06, 2));      // anel do refletor
+    v *= 1 - smooth(0.72, 1.0, r);                              // borda macia
+    v *= 0.95 + 0.05 * Math.sin(Math.atan2(y - h, x - h) * 7 + r * 9); // irregularidade do refletor
+    const k = (y * size + x) * 4, cl = Math.max(0, Math.min(1, v));
+    d[k] = 255 * cl; d[k + 1] = 250 * cl; d[k + 2] = 238 * cl; d[k + 3] = 255;
+  }
+  g.putImageData(id, 0, 0);
+  // poeira e riscos na lente (bem sutis)
+  g.globalCompositeOperation = 'multiply';
+  for (let i = 0; i < 70; i++) { const x = rnd() * size, y = rnd() * size, rr = 1 + rnd() * 3.5; g.fillStyle = `rgba(150,145,140,${0.25 + rnd() * 0.35})`; g.beginPath(); g.arc(x, y, rr, 0, 7); g.fill(); }
+  g.strokeStyle = 'rgba(170,165,160,0.5)'; g.lineWidth = 1;
+  for (let i = 0; i < 5; i++) { g.beginPath(); const x = rnd() * size, y = rnd() * size, a = rnd() * 6.3, l = 20 + rnd() * 60; g.moveTo(x, y); g.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l); g.stroke(); }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.needsUpdate = true;
+  return t;
+}
+function smooth(a, b, x) { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); }

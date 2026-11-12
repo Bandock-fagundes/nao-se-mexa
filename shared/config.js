@@ -125,3 +125,33 @@ export const NET = { snapRate: 15, inputRate: 20, reconnectGrace: 120, hostMigra
 export const MAX_PLAYERS = 3;
 // keepalive HTTP enquanto houver sala ativa (minutos) e limite de fila de envio por cliente (bytes)
 export const SERVER = { keepAliveMs: 4 * 60 * 1000, maxBuffered: 256 * 1024, heartbeatMs: 10000 };
+
+// v9b: ILUMINAÇÃO (muito mais escura e assustadora). Valores usados pelo gerador (quais cômodos têm luz) e pelo
+// cliente (névoa, ambiente, luminárias, lanterna). Ajuste aqui.
+export const LIGHTING = {
+  exposure: 0.82,                       // exposição do tone mapping (ACES)
+  background: 0x010102,
+  hemi: { sky: 0x4a5674, ground: 0x1a130c, intensity: 2.2 },   // luz "de lugar nenhum": só dá forma ao que está perto
+  ambient: { color: 0x22262f, intensity: 1.0 },
+  // névoa escura exponencial (FogExp2): ~30% a 4 m, ~70% a 8 m, quase preto além de ~12 m
+  fog: { color: 0x020203, density: [0.14, 0.12, 0.12, 0.13] }, // por andar: porão, térreo, 2º, sótão
+  // gerador: fração dos cômodos que mantêm luminária/vela acesa (o resto fica apagado); lareira sempre acesa
+  lampRoomKeep: 0.42,
+  lampExtraOff: 0.5,                    // num cômodo aceso, cada luminária além da 1ª tem esta chance de estar apagada
+  lampIntensity: 0.7,                   // multiplica a intensidade das luminárias que ficam
+  lampRange: 0.6,                       // multiplica o alcance (poça de luz parcial no cômodo)
+  // cliente: multiplicadores no pool de luzes
+  pool: { lamp: 0.36, fire: 0.75, moon: 0.62, rangeK: 0.75 },
+  // lanterna: luz principal, mais realista e fraca
+  flashlight: {
+    color: 0xffd6a0,                    // ~3500 K (quente, levemente amarelada)
+    intensity: 130,                     // candela (decaimento físico)
+    distance: 26, decay: 2,             // vai longe, mas fraca
+    angle: 0.36, penumbra: 0.8,         // penumbra macia; o "hotspot" vem do mapa de luz (cookie) quando há sombra
+    nearDim: 1.5,                       // < 1,5 m de uma superfície: reduz ∝ d² (já existia)
+    flickerEvery: [25, 70],             // s entre engasgos raros
+    flickerDur: [0.08, 0.35],
+    beamStrength: 0.032, beamColor: 0xffe2b8,
+    remoteIntensity: 85,
+  },
+};

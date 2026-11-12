@@ -4,13 +4,13 @@ import * as THREE from 'three';
 import { setFxTime } from './render/fx.js';
 import { generateFromParams } from '../../shared/mapgen.js';
 import { World, cellOf } from '../../shared/world.js';
-import { PLAYER, LEVELS, PHASES, CELL, T, W, D, GEN_VERSION } from '../../shared/config.js';
+import { PLAYER, LEVELS, PHASES, CELL, T, W, D, GEN_VERSION, LIGHTING } from '../../shared/config.js';
 import { buildMansion, LightPool, flicker } from './render/mansion.js';
 import { updateExterior } from './render/exterior.js';
 import { buildCreature } from './render/creature.js';
 import { buildHand, HandAnimator } from './render/hand.js';
 import { buildTeammate, animateTeammate, teammateFacing } from './render/human.js';
-import { makeBeamCone } from './render/renderer.js';
+import { makeBeamCone, flashlightCookie } from './render/renderer.js';
 import { buildKey } from './render/props.js';
 import { storyPainting } from './story.js';
 import { LEVEL_INFO } from '../../shared/sound.js';
@@ -59,16 +59,20 @@ export class Game {
     this.hand = buildHand(M); this.R.handScene.add(this.hand.root); this.handAnim = new HandAnimator(this.hand);
     // preenchimento frontal suave na mão (luz da lanterna rebatida nas paredes) — a madeira não fica chapada de preto
     this.handFront = new THREE.DirectionalLight(0xffe6cc, 0); this.handFront.position.set(-0.35, 0.5, 1); this.R.handScene.add(this.handFront);
-    this.spot = new THREE.SpotLight(0xe8f0ff, 0, 28, 0.42, 0.45, 1.0);
+    // v9b: lanterna quente (~3500 K), mais fraca, decaimento físico (d²), penumbra macia, cookie com hotspot/poeira
+    const FL = LIGHTING.flashlight;
+    this.spot = new THREE.SpotLight(FL.color, 0, FL.distance, FL.angle, FL.penumbra, FL.decay);
+    this.flCookie = flashlightCookie(); this.spot.map = this.R.q.shadows ? this.flCookie : null;
+    this.flFlick = { next: FL.flickerEvery[0] + Math.random() * (FL.flickerEvery[1] - FL.flickerEvery[0]), until: 0, seed: Math.random() * 100 };
     this.spot.castShadow = this.R.q.shadows; this.spot.shadow.mapSize.set(this.R.q.shadowSize, this.R.q.shadowSize); this.spot.shadow.camera.near = 0.15; this.spot.shadow.bias = -0.0006; this.spot.shadow.normalBias = 0.02;
     // v4: a sombra da lanterna só considera 14 m (a luz vai até 28 m, mas lá longe já é fraca e a névoa cobre):
     // menos objetos entram no mapa de sombra a cada quadro. A única luz com sombra é a lanterna (luminárias sem sombra).
     { const sh = this.spot.shadow, up = sh.updateMatrices.bind(sh); sh.updateMatrices = (light) => { const d = light.distance; light.distance = Math.min(d || 14, 14); up(light); light.distance = d; }; }
     this.R.scene.add(this.spot); this.R.scene.add(this.spot.target);
-    this.beam = makeBeamCone(7.5, 0.36, 0.06); this.R.scene.add(this.beam);
-    this.R.onQualityChange = (q) => { this.spot.castShadow = q.shadows; this.spot.shadow.mapSize.set(q.shadowSize, q.shadowSize); if (this.spot.shadow.map) { this.spot.shadow.map.dispose(); this.spot.shadow.map = null; } };
+    this.beam = makeBeamCone(7.5, 0.34, FL.beamStrength, FL.beamColor); this.R.scene.add(this.beam);
+    this.R.onQualityChange = (q) => { this.spot.castShadow = q.shadows; this.spot.map = q.shadows ? this.flCookie : null; this.spot.shadow.mapSize.set(q.shadowSize, q.shadowSize); if (this.spot.shadow.map) { this.spot.shadow.map.dispose(); this.spot.shadow.map = null; } };
     // lanternas dos colegas (luzes fixas reaproveitadas)
-    this.remoteSpots = [0, 1, 2].map(() => { const s = new THREE.SpotLight(0xe8f0ff, 0, 18, 0.4, 0.5, 1.5); this.R.scene.add(s); this.R.scene.add(s.target); const c = makeBeamCone(6, 0.36, 0.045); c.visible = false; this.R.scene.add(c); return { s, c }; });
+    this.remoteSpots = [0, 1, 2].map(() => { const s = new THREE.SpotLight(FL.color, 0, 18, FL.angle, FL.penumbra, FL.decay); this.R.scene.add(s); this.R.scene.add(s.target); const c = makeBeamCone(6, 0.34, FL.beamStrength * 0.75, FL.beamColor); c.visible = false; this.R.scene.add(c); return { s, c }; });
     this.mates = new Map(); this.snaps = [];
     // espectador: luz de preenchimento suave em volta do colega observado (a figura inteira fica legível)
     this.specFill = new THREE.PointLight(0xc4ccdc, 0, 7, 1.4); this.R.scene.add(this.specFill);
@@ -340,7 +344,7 @@ export class Game {
     this.updateSpecFill(dt);
     // ----- visibilidade por andar / neblina -----
     for (let L = 0; L < 4; L++) this.view.levels[L].visible = Math.abs(L - camLevel) <= 1;
-    const fogD = camLevel === 0 ? 0.075 : camLevel === 3 ? 0.068 : 0.05;
+    const fogD = LIGHTING.fog.density[camLevel] ?? LIGHTING.fog.density[1]; // v9b: névoa escura densa (config)
     R.scene.fog.density += (fogD - R.scene.fog.density) * Math.min(1, dt * 2);
     // ----- luzes -----
     this.pool.update(dt, this.t, cam.position, camLevel, this.view.lamps);
@@ -360,10 +364,10 @@ export class Game {
     // na proporção do quadrado da distância, para a luz não "estourar" em branco quando se chega perto para ler
     if (flOn) {
       const d = this.flashNearDist(cam.position, fwd, camLevel);
-      const target = Math.max(0.1, Math.min(1, (d / 1.5) * (d / 1.5)));
+      const nd = LIGHTING.flashlight.nearDim, target = Math.max(0.1, Math.min(1, (d / nd) * (d / nd)));
       this.flK = (this.flK ?? 1) + (target - (this.flK ?? 1)) * Math.min(1, dt * 10);
     }
-    this.spot.intensity = flOn ? 40 * (this.flK ?? 1) : 0;
+    this.spot.intensity = flOn ? LIGHTING.flashlight.intensity * (this.spot.map ? 1 : 0.8) * (this.flK ?? 1) * this.flashFlicker(dt) : 0;
     this.spot.position.copy(lensPos);
     this.spot.target.position.copy(cam.position).addScaledVector(fwd, 10).addScaledVector(right, -0.25);
     this.beam.visible = flOn;
@@ -809,7 +813,7 @@ export class Game {
         const yaw = lerpA(sa.yaw, sp.yaw, k), pitch = sp.pitch;
         const dir = new THREE.Vector3(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch));
         const pos = new THREE.Vector3(x + Math.cos(yaw) * 0.2, y + (sp.crouch ? 0.95 : 1.33), z - Math.sin(yaw) * 0.2).addScaledVector(dir, 0.5);
-        rs.s.intensity = on ? 30 : 0; rs.s.position.copy(pos); rs.s.target.position.copy(pos).addScaledVector(dir, 8);
+        rs.s.intensity = on ? LIGHTING.flashlight.remoteIntensity : 0; rs.s.position.copy(pos); rs.s.target.position.copy(pos).addScaledVector(dir, 8);
         rs.c.visible = on; rs.c.position.copy(pos); rs.c.lookAt(rs.s.target.position); rs.c.rotateY(Math.PI);
       }
     }
@@ -831,6 +835,15 @@ export class Game {
   }
   // distância (m) até a primeira superfície à frente da câmera — marcha barata pela grade (paredes, móveis
   // altos/baixos, piso e teto); 9 = nada perto
+  // v9b: ruído quase imperceptível + engasgo raro (a cada 25–70 s, 0,08–0,35 s de piscadas)
+  flashFlicker(dt) {
+    const F = this.flFlick, FL = LIGHTING.flashlight; if (!F) return 1;
+    const t = this.t || 0;
+    let k = 1 + 0.015 * Math.sin(t * 7.3 + F.seed) * Math.sin(t * 2.1 + F.seed * 2);
+    if (t >= F.next && t > F.until) { F.until = t + FL.flickerDur[0] + Math.random() * (FL.flickerDur[1] - FL.flickerDur[0]); F.next = F.until + FL.flickerEvery[0] + Math.random() * (FL.flickerEvery[1] - FL.flickerEvery[0]); }
+    if (t < F.until) { const n = Math.sin(t * 61 + F.seed) * Math.sin(t * 23 + F.seed * 3); k *= n > 0.2 ? 0.25 : n > -0.3 ? 0.7 : 1; }
+    void dt; return k;
+  }
   flashNearDist(pos, fwd, L) {
     const lv = LEVELS[L]; if (!lv) return 9;
     for (let s = 0.12; s <= 1.6; s += 0.08) {

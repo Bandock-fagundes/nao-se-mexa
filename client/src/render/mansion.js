@@ -1,7 +1,7 @@
 // Constrói a mansão 3D a partir do mapa gerado (mesma semente do servidor).
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { CELL, W, D, T, LEVELS, ROWS } from '../../../shared/config.js';
+import { CELL, W, D, T, LEVELS, ROWS, LIGHTING } from '../../../shared/config.js';
 import { buildProp, buildKey, buildKnockable, B, C, S, RB, mesh, tint } from './props.js';
 import { storyPainting, noteTexture, NOTES, PAINTING_TITLES, windowDrawingsTexture } from '../story.js';
 import { winSize } from './decorboxes.js';
@@ -633,9 +633,9 @@ export class LightPool {
       const lp = s.lamp;
       s.k = Math.min(1, s.k + dt * 3);
       s.l.position.set(lp.lx ?? lp.x, lp.y, lp.lz ?? lp.z);
-      s.l.color.setHex(lp.color); s.l.distance = lp.range * (lp.kind === 'fire' ? 1.0 : 0.75);
+      const P = LIGHTING.pool; s.l.color.setHex(lp.color); s.l.distance = lp.range * (lp.kind === 'fire' ? 1.0 : P.rangeK);
       // poças de luz quentes e pequenas: a lanterna é a luz principal
-      s.l.intensity = lp.intensity * (lp.kind === 'moon' ? 1.0 : lp.kind === 'fire' ? 0.95 : 0.42) * s.k * flicker(lp, t); // v5: a lareira acesa ilumina a sala de verdade // v2: luzes da casa mais fracas — a lanterna manda
+      s.l.intensity = lp.intensity * (lp.kind === 'moon' ? P.moon : lp.kind === 'fire' ? P.fire : P.lamp) * s.k * flicker(lp, t); // v9b: multiplicadores em LIGHTING.pool // v5: a lareira acesa ilumina a sala de verdade // v2: luzes da casa mais fracas — a lanterna manda
     }
   }
 }

@@ -19,6 +19,7 @@ const CELL = 0.5, LY = [-3.6, 0, 3.8, 7.6];
 const send = (pg, m) => pg.evaluate((m) => window.__app.net.send(m), m);
 async function shot(pg, file, wait = 1500) {
   await pg.evaluate(() => { window.__app.noRender = false; for (const id of ['hudTL', 'hudTR', 'wave', 'hudB', 'toasts', 'prompt']) { const e = document.getElementById(id); if (e) e.style.visibility = 'hidden'; } });
+  if (process.env.PRE_EVAL) log('pre', await pg.evaluate(process.env.PRE_EVAL));
   await sleep(wait);
   await pg.screenshot({ path: path.join(OUT, PFX + file) }); log('captura', PFX + file);
   await pg.evaluate(() => { window.__app.noRender = true; });
@@ -35,6 +36,7 @@ async function stand(pg, x, z, level, tx, ty, tz) {
 try {
   const map = generateMansion(SEED, { size: 1 });
   const pg = await newPage(browser, `${srv.url || 'http://localhost:' + srv.port}/testar?e2e=1&quality=${process.env.Q || 'medium'}`, (...a) => log('page', ...a), 640, 360);
+  pg.on('error', e => log('CRASH', e.message)); pg.on('close', () => log('page closed'));
   await pg.waitForSelector('#testar.on');
   await pg.$eval('#tSeed', (e, s) => { e.value = s; }, SEED);
   await pg.evaluate(() => { document.querySelector('#tDiag').checked = false; });
@@ -64,7 +66,7 @@ try {
     const r = map.rooms.filter(r => r.level === 1 && ['living', 'dining', 'study', 'library', 'bedroom'].includes(r.type))[0];
     const cx = (r.x0 + r.x1 + 1) / 2 * CELL, cz = (r.z0 + r.z1 + 1) / 2 * CELL;
     const x0 = (r.x0 + 1.5) * CELL, z0 = (r.z0 + 1.5) * CELL;
-    await stand(pg, x0, z0, 1, cx + (cx - x0), 1.0, cz + (cz - z0));
+    await stand(pg, x0, z0, 1, cx, +(process.env.TY || 0.6), cz);
     if (want('dark')) { await fl(false); await shot(pg, 'comodo-escuro-sem-lanterna.png', 2000); }
     if (want('beam')) { await fl(true); await shot(pg, 'lanterna-facho.png'); }
   }
